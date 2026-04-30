@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VAAS · SQL Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/languages/sql.min.js"></script>
+<style>
+  :root {
+    --bg-deep: #07071a;
+    --bg-1: #0d0d24;
+    --bg-2: rgba(20, 22, 48, 0.55);
+    --bg-3: rgba(28, 30, 60, 0.7);
+    --border: rgba(139, 119, 255, 0.12);
+    --border-strong: rgba(139, 119, 255, 0.28);
+    --fg: #e6e8f5;
+    --fg-dim: #8a8fb5;
+    --fg-muted: #5a5f85;
+    --blue: #4f8eff;
+    --purple: #a855f7;
+    --pink: #e879f9;
+    --cyan: #22d3ee;
+    --green: #34d399;
+    --danger: #f87171;
+    --gradient: linear-gradient(135deg, #4f8eff 0%, #8b5cf6 50%, #a855f7 100%);
+    --gradient-text: linear-gradient(135deg, #60a5fa 0%, #c084fc 100%);
+    --glow-blue: 0 0 32px rgba(79, 142, 255, 0.35);
+    --glow-purple: 0 0 32px rgba(168, 85, 247, 0.35);
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg-deep);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(circle at 20% 10%, rgba(79, 142, 255, 0.18), transparent 45%),
+      radial-gradient(circle at 80% 90%, rgba(168, 85, 247, 0.18), transparent 45%),
+      radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.06), transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(139, 119, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(139, 119, 255, 0.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+    z-index: 0;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+  }
+
+  header {
+    position: relative;
+    z-index: 10;
+    padding: 16px 28px;
+    background: rgba(13, 13, 36, 0.7);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-mark {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    background: var(--gradient);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 14px;
+    color: #fff;
+    box-shadow: var(--glow-purple);
+    position: relative;
+    overflow: hidden;
+  }
+  .logo-mark::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%);
+    animation: shine 4s ease-in-out infinite;
+  }
+  @keyframes shine {
+    0%, 100% { transform: translateX(-100%); }
+    50% { transform: translateX(100%); }
+  }
+  .logo-text { display: flex; flex-direction: column; line-height: 1.15; }
+  .logo-title {
+    font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+    background: var(--gradient-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .logo-sub {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+
+  .header-meta { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .status-pill {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .status-pill .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px currentColor;
+  }
+  .status-pill.error .dot { background: var(--danger); }
+  .status-pill.error { color: var(--danger); border-color: rgba(248, 113, 113, 0.3); }
+
+  .provider-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid;
+    white-space: nowrap;
+    background: rgba(255, 255, 255, 0.02);
+    transition: all 0.2s ease;
+  }
+  .provider-badge.ollama {
+    color: #fb923c;
+    border-color: rgba(251, 146, 60, 0.4);
+    background: rgba(251, 146, 60, 0.08);
+    box-shadow: 0 0 16px rgba(251, 146, 60, 0.15);
+  }
+  .provider-badge.anthropic {
+    color: #c084fc;
+    border-color: rgba(192, 132, 252, 0.4);
+    background: rgba(192, 132, 252, 0.08);
+    box-shadow: 0 0 16px rgba(192, 132, 252, 0.2);
+  }
+  .provider-badge.offline {
+    color: var(--danger);
+    border-color: rgba(248, 113, 113, 0.4);
+    background: rgba(248, 113, 113, 0.08);
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    height: calc(100vh - 69px);
+    gap: 16px;
+    padding: 16px;
+  }
+
+  .glass {
+    background: var(--bg-2);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .chat-pane {
+    flex: 0 0 calc(70% - 8px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .history-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .pane-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pane-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--fg-dim);
+    font-family: var(--mono);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .pane-title::before {
+    content: '';
+    width: 4px; height: 14px;
+    background: var(--gradient);
+    border-radius: 2px;
+  }
+  .pane-count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-muted);
+    background: rgba(139, 119, 255, 0.08);
+    border: 1px solid var(--border);
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 28px;
+    scroll-behavior: smooth;
+  }
+
+  .msg {
+    margin-bottom: 22px;
+    animation: fadeUp 0.3s ease;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .msg-avatar {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .msg.user .msg-avatar {
+    background: linear-gradient(135deg, #1e3a8a, #3730a3);
+    color: #c7d2fe;
+    border: 1px solid rgba(99, 102, 241, 0.4);
+  }
+  .msg.assistant .msg-avatar {
+    background: var(--gradient);
+    color: #fff;
+    box-shadow: var(--glow-purple);
+  }
+  .msg-role {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--fg-dim);
+  }
+  .msg.assistant .msg-role {
+    background: var(--gradient-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .msg-body {
+    margin-left: 38px;
+    background: rgba(28, 30, 60, 0.4);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 14px;
+  }
+  .msg.user .msg-body {
+    background: linear-gradient(135deg, rgba(79, 142, 255, 0.08), rgba(168, 85, 247, 0.08));
+    border-color: rgba(139, 119, 255, 0.25);
+  }
+
+  .msg-body strong { color: #e9d5ff; font-weight: 600; }
+  .msg-body code:not(.hljs) {
+    background: rgba(139, 119, 255, 0.12);
+    color: #c4b5fd;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 88%;
+    border: 1px solid rgba(139, 119, 255, 0.18);
+  }
+
+  .msg-body pre {
+    margin: 12px 0 4px;
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+    background: #0a0a1f !important;
+    border: 1px solid var(--border-strong);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  }
+  .msg-body pre::before {
+    content: 'SQL';
+    position: absolute;
+    top: 10px; left: 14px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    background: var(--gradient-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    z-index: 1;
+  }
+  .msg-body pre code.hljs {
+    padding: 36px 16px 16px !important;
+    font-family: var(--mono) !important;
+    font-size: 13px !important;
+    background: transparent !important;
+    line-height: 1.6 !important;
+  }
+
+  .copy-btn {
+    position: absolute;
+    top: 8px; right: 8px;
+    background: rgba(139, 119, 255, 0.1);
+    color: var(--fg-dim);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 10px;
+    font-family: var(--mono);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.15s ease;
+    z-index: 2;
+  }
+  .copy-btn:hover {
+    background: rgba(139, 119, 255, 0.2);
+    color: var(--fg);
+    border-color: var(--border-strong);
+  }
+  .copy-btn.copied {
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--green);
+    border-color: rgba(52, 211, 153, 0.4);
+  }
+
+  .input-area {
+    border-top: 1px solid var(--border);
+    padding: 16px 20px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+  }
+
+  .input-wrap {
+    flex: 1;
+    position: relative;
+    background: rgba(13, 13, 36, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    transition: all 0.2s ease;
+  }
+  .input-wrap:focus-within {
+    border-color: rgba(139, 119, 255, 0.5);
+    box-shadow: 0 0 0 3px rgba(139, 119, 255, 0.12), var(--glow-purple);
+  }
+
+  textarea {
+    width: 100%;
+    background: transparent;
+    color: var(--fg);
+    border: none;
+    padding: 12px 14px;
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 44px;
+    max-height: 180px;
+    outline: none;
+    resize: none;
+  }
+  textarea::placeholder { color: var(--fg-muted); }
+
+  button.send {
+    background: var(--gradient);
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    padding: 0 22px;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 4px 20px rgba(139, 92, 246, 0.35);
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  button.send::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.2), transparent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  button.send:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 28px rgba(139, 92, 246, 0.5);
+  }
+  button.send:hover:not(:disabled)::before { opacity: 1; }
+  button.send:active:not(:disabled) { transform: translateY(0); }
+  button.send:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .send-icon {
+    width: 14px; height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .loading {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.25);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .history-item {
+    background: rgba(13, 13, 36, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    position: relative;
+    transition: border-color 0.2s ease;
+  }
+  .history-item:hover { border-color: var(--border-strong); }
+  .history-item-meta {
+    font-size: 10px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .history-item-meta::before {
+    content: '#';
+    color: var(--purple);
+    font-weight: 700;
+  }
+  .history-item pre {
+    margin: 0;
+    background: transparent !important;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+  }
+  .history-item pre code.hljs {
+    padding: 0 !important;
+    background: transparent !important;
+    font-size: 11.5px !important;
+    line-height: 1.55 !important;
+    max-height: 160px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .history-item .copy-btn {
+    position: static;
+    margin-top: 10px;
+    width: fit-content;
+  }
+
+  .history-empty {
+    color: var(--fg-muted);
+    padding: 32px 20px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.7;
+  }
+  .history-empty .icon {
+    font-size: 32px;
+    display: block;
+    margin-bottom: 12px;
+    opacity: 0.4;
+  }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(139, 119, 255, 0.15);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(139, 119, 255, 0.3); }
+
+  .model-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    border: 1px solid;
+    text-transform: uppercase;
+  }
+  .model-badge.haiku {
+    color: var(--green);
+    border-color: rgba(52, 211, 153, 0.4);
+    background: rgba(52, 211, 153, 0.1);
+    box-shadow: 0 0 14px rgba(52, 211, 153, 0.15);
+  }
+  .model-badge.sonnet {
+    color: #60a5fa;
+    border-color: rgba(96, 165, 250, 0.45);
+    background: rgba(96, 165, 250, 0.1);
+    box-shadow: 0 0 14px rgba(96, 165, 250, 0.18);
+  }
+
+  .welcome-examples {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .example-chip {
+    background: rgba(139, 119, 255, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    font-family: var(--sans);
+  }
+  .example-chip:hover {
+    background: rgba(139, 119, 255, 0.12);
+    border-color: var(--border-strong);
+    color: var(--fg);
+    transform: translateX(2px);
+  }
+  .example-chip::before {
+    content: '→';
+    color: var(--purple);
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-mark">V</div>
+    <div class="logo-text">
+      <span class="logo-title">VAAS SQL Assistant</span>
+      <span class="logo-sub">Natural Language → MySQL</span>
+    </div>
+  </div>
+  <div class="header-meta">
+    <span class="status-pill" id="status"><span class="dot"></span><span id="status-text">cargando...</span></span>
+    <span class="provider-badge" id="provider-badge">…</span>
+  </div>
+</header>
+
+<div class="container">
+  <section class="chat-pane glass">
+    <div class="pane-header">
+      <span class="pane-title">Conversación</span>
+    </div>
+    <div class="messages" id="messages"></div>
+    <form class="input-area" id="form">
+      <div class="input-wrap">
+        <textarea id="input" placeholder="Pregunta lo que necesites en lenguaje natural..." rows="1"></textarea>
+      </div>
+      <button class="send" type="submit" id="send-btn">
+        <span id="send-label">Generar SQL</span>
+        <svg class="send-icon" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </button>
+    </form>
+  </section>
+
+  <aside class="history-pane glass">
+    <div class="pane-header">
+      <span class="pane-title">Queries generadas</span>
+      <span class="pane-count" id="history-count">0</span>
+    </div>
+    <div class="history-list" id="history">
+      <div class="history-empty">
+        <span class="icon">⌘</span>
+        Aquí aparecerán las queries SQL<br>conforme las generes.
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+const messagesEl = document.getElementById('messages');
+const historyEl = document.getElementById('history');
+const historyCountEl = document.getElementById('history-count');
+const inputEl = document.getElementById('input');
+const formEl = document.getElementById('form');
+const sendBtn = document.getElementById('send-btn');
+const sendLabel = document.getElementById('send-label');
+const statusEl = document.getElementById('status');
+const statusTextEl = document.getElementById('status-text');
+
+const conversation = [];
+const queryHistory = [];
+
+const EXAMPLES = [
+  '¿Cuál fue el recaudo de los últimos 15 días?',
+  '¿Cuántos pagos conciliados por gateway por día tiene Addi?',
+  '¿Cuánto hay pendiente de distribuir para Finkargo en marzo?',
+];
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderMarkdown(text) {
+  const parts = [];
+  const fenceRe = /```(\w+)?\n([\s\S]*?)```/g;
+  let last = 0, m;
+  while ((m = fenceRe.exec(text)) !== null) {
+    parts.push({ type: 'text', value: text.slice(last, m.index) });
+    parts.push({ type: 'code', lang: m[1] || 'plaintext', value: m[2] });
+    last = m.index + m[0].length;
+  }
+  parts.push({ type: 'text', value: text.slice(last) });
+
+  return parts.map(p => {
+    if (p.type === 'code') {
+      const lang = p.lang === 'sql' ? 'sql' : p.lang;
+      const escaped = escapeHtml(p.value.trimEnd());
+      return `<pre><button class="copy-btn" onclick="copyCode(this)">Copiar</button><code class="language-${lang}">${escaped}</code></pre>`;
+    }
+    let t = escapeHtml(p.value);
+    t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+    return t;
+  }).join('');
+}
+
+function modelBadge(modelUsed) {
+  if (!modelUsed || modelUsed === 'none') return '';
+  if (modelUsed.includes('haiku')) {
+    return `<span class="model-badge haiku">⚡ Haiku</span>`;
+  }
+  if (modelUsed.includes('sonnet')) {
+    return `<span class="model-badge sonnet">🧠 Sonnet</span>`;
+  }
+  return `<span class="model-badge">${escapeHtml(modelUsed)}</span>`;
+}
+
+function appendMessage(role, content, opts = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = `msg ${role}`;
+
+  const avatar = role === 'user' ? 'TÚ' : 'AI';
+  const roleLabel = role === 'user' ? 'Tú' : 'VAAS Assistant';
+
+  let bodyHtml = renderMarkdown(content);
+  if (opts.examples) {
+    bodyHtml += `<div class="welcome-examples">${
+      EXAMPLES.map(e => `<button class="example-chip" onclick="useExample(this)">${escapeHtml(e)}</button>`).join('')
+    }</div>`;
+  }
+  if (role === 'assistant' && opts.modelUsed) {
+    bodyHtml += modelBadge(opts.modelUsed);
+  }
+
+  wrap.innerHTML = `
+    <div class="msg-header">
+      <div class="msg-avatar">${avatar}</div>
+      <div class="msg-role">${roleLabel}</div>
+    </div>
+    <div class="msg-body">${bodyHtml}</div>`;
+  messagesEl.appendChild(wrap);
+  wrap.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  if (role === 'assistant') {
+    extractAndStoreQueries(content);
+  }
+}
+
+function useExample(btn) {
+  inputEl.value = btn.textContent;
+  inputEl.focus();
+  inputEl.dispatchEvent(new Event('input'));
+}
+window.useExample = useExample;
+
+function extractAndStoreQueries(text) {
+  const re = /```sql\n([\s\S]*?)```/g;
+  let m, found = false;
+  while ((m = re.exec(text)) !== null) {
+    queryHistory.unshift({ sql: m[1].trim(), ts: new Date() });
+    found = true;
+  }
+  if (found) renderHistory();
+}
+
+function renderHistory() {
+  historyCountEl.textContent = queryHistory.length;
+  if (queryHistory.length === 0) {
+    historyEl.innerHTML = `<div class="history-empty"><span class="icon">⌘</span>Aquí aparecerán las queries SQL<br>conforme las generes.</div>`;
+    return;
+  }
+  historyEl.innerHTML = queryHistory.map((q, i) => {
+    const t = q.ts.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const num = String(queryHistory.length - i).padStart(2, '0');
+    return `
+      <div class="history-item">
+        <div class="history-item-meta">query ${num} · ${t}</div>
+        <pre><code class="language-sql">${escapeHtml(q.sql)}</code></pre>
+        <button class="copy-btn" onclick="copyHistory(this, ${i})">Copiar</button>
+      </div>`;
+  }).join('');
+  historyEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+}
+
+function copyCode(btn) {
+  const code = btn.parentElement.querySelector('code');
+  doCopy(btn, code.innerText);
+}
+
+function copyHistory(btn, idx) {
+  doCopy(btn, queryHistory[idx].sql);
+}
+
+function doCopy(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copiado';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+  });
+}
+window.copyCode = copyCode;
+window.copyHistory = copyHistory;
+
+function setLoading(on) {
+  sendBtn.disabled = on;
+  inputEl.disabled = on;
+  if (on) {
+    sendLabel.innerHTML = '<span class="loading"></span>';
+  } else {
+    sendLabel.textContent = 'Generar SQL';
+  }
+}
+
+async function send(text) {
+  conversation.push({ role: 'user', content: text });
+  appendMessage('user', text);
+  setLoading(true);
+
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: conversation }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Error desconocido');
+    }
+    const data = await res.json();
+    conversation.push({ role: 'assistant', content: data.response });
+    appendMessage('assistant', data.response, { modelUsed: data.model_used });
+  } catch (e) {
+    appendMessage('assistant', `❌ **Error**: ${e.message}`);
+  } finally {
+    setLoading(false);
+    inputEl.focus();
+  }
+}
+
+formEl.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = inputEl.value.trim();
+  if (!text) return;
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  send(text);
+});
+
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    formEl.requestSubmit();
+  }
+});
+
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
+});
+
+async function loadStatus() {
+  const badgeEl = document.getElementById('provider-badge');
+  try {
+    const res = await fetch('/health');
+    const data = await res.json();
+
+    const opts = data.optimizaciones_activas || [];
+    badgeEl.textContent = `⚡ Anthropic · ${opts.length} opt`;
+    badgeEl.className = 'provider-badge anthropic';
+    badgeEl.title = opts.join(' · ');
+
+    if (!data.mds_cargados) {
+      statusEl.classList.add('error');
+      statusTextEl.textContent = 'knowledge/ vacío';
+    } else {
+      statusEl.classList.remove('error');
+      statusTextEl.textContent = `${data.mds_cargados} MD · ${data.total_kb} KB`;
+    }
+  } catch {
+    statusEl.classList.add('error');
+    statusTextEl.textContent = 'backend offline';
+    badgeEl.textContent = 'offline';
+    badgeEl.className = 'provider-badge offline';
+  }
+}
+
+const WELCOME = `**Hola** 👋  Soy tu asistente SQL para VAAS.
+
+Convierto tus preguntas en lenguaje natural a queries listas para MySQL 8.0. Prueba alguno de estos ejemplos o escribe el tuyo:`;
+
+appendMessage('assistant', WELCOME, { examples: true });
+loadStatus();
+inputEl.focus();
+</script>
+</body>
+</html>
