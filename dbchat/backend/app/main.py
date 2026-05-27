@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import dashboards as dashboards_store
 from . import glossary as glossary_store
 from . import memory as memory_store
 from .agent import stream_chat
@@ -456,6 +457,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10000)
     history: list[dict[str, Any]] = Field(default_factory=list)
     api_key: str | None = Field(default=None)
+    mode: str = Field(default="preview", pattern="^(preview|execute)$")
 
 
 def _sse_event(payload: dict[str, Any]) -> bytes:
@@ -463,19 +465,18 @@ def _sse_event(payload: dict[str, Any]) -> bytes:
 
 
 def _resolve_chat_auth(body_api_key: str | None) -> dict[str, str]:
-    """Pick a chat backend. Priority: body key > claude CLI > env key.
+    """Pick a chat backend. Priority: body key > env key > claude CLI.
 
-    The CLI is preferred over a Claude Code-managed env key because tokens that
-    Claude Code sets as ANTHROPIC_API_KEY may be scoped to a proxy and fail
-    against api.anthropic.com directly. The CLI talks through its own auth.
+    The .env key wins over CLI so the app uses the project-specific credentials
+    when deployed, with the local Claude CLI as a fallback for dev convenience.
     """
     if body_api_key:
         return {"api_key": body_api_key}
-    if detect_claude_cli():
-        return {"mode": "cli"}
     env_key = os.getenv("ANTHROPIC_API_KEY")
     if env_key:
         return {"api_key": env_key}
+    if detect_claude_cli():
+        return {"mode": "cli"}
     return {}
 
 
@@ -499,7 +500,7 @@ def chat(req: ChatRequest) -> StreamingResponse:
 
     def event_stream():
         try:
-            for event in stream_chat(auth, cfg, req.message, req.history):
+            for event in stream_chat(auth, cfg, req.message, req.history, mode=req.mode):
                 yield _sse_event(event)
         except Exception as e:
             log.exception("Chat stream crashed")
@@ -510,6 +511,134 @@ def chat(req: ChatRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class DashboardCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., min_length=1, max_length=120)
+
+
+class DashboardRename(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., min_length=1, max_length=120)
+
+
+class TileLayout(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    x: int = Field(default=0, ge=0)
+    y: int = Field(default=0, ge=0)
+    w: int = Field(default=6, ge=1, le=12)
+    h: int = Field(default=5, ge=1, le=40)
+
+
+class TileCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(default="Untitled chart", min_length=1, max_length=200)
+    sql: str = Field(..., min_length=1, max_length=20000)
+    chart_kind: str = Field(
+        default="bar", pattern="^(bar|line|area|pie|kpi|ring)$"
+    )
+    top_n: int | str = Field(default=20)
+    x_key: str | None = Field(default=None, max_length=128)
+    y_series: list[str] | None = Field(default=None, max_length=32)
+    kpi_label: str | None = Field(default=None, max_length=128)
+    layout: TileLayout | None = None
+
+
+class TilePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    sql: str | None = Field(default=None, min_length=1, max_length=20000)
+    chart_kind: str | None = Field(
+        default=None, pattern="^(bar|line|area|pie|kpi|ring)$"
+    )
+    top_n: int | str | None = None
+    x_key: str | None = Field(default=None, max_length=128)
+    y_series: list[str] | None = Field(default=None, max_length=32)
+    kpi_label: str | None = Field(default=None, max_length=128)
+    layout: TileLayout | None = None
+
+
+class LayoutItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    i: str
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    w: int = Field(ge=1, le=12)
+    h: int = Field(ge=1, le=40)
+
+
+class LayoutsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    layouts: list[LayoutItem]
+
+
+@app.get("/api/dashboards")
+def list_dashboards_route():
+    return {"dashboards": dashboards_store.list_dashboards()}
+
+
+@app.post("/api/dashboards")
+def create_dashboard_route(req: DashboardCreate):
+    return dashboards_store.create_dashboard(req.name)
+
+
+@app.get("/api/dashboards/{dashboard_id}")
+def get_dashboard_route(dashboard_id: str):
+    d = dashboards_store.get_dashboard(dashboard_id)
+    if d is None:
+        raise HTTPException(404, "Dashboard not found")
+    return d
+
+
+@app.put("/api/dashboards/{dashboard_id}")
+def rename_dashboard_route(dashboard_id: str, req: DashboardRename):
+    d = dashboards_store.rename_dashboard(dashboard_id, req.name)
+    if d is None:
+        raise HTTPException(404, "Dashboard not found")
+    return d
+
+
+@app.delete("/api/dashboards/{dashboard_id}")
+def delete_dashboard_route(dashboard_id: str):
+    if not dashboards_store.delete_dashboard(dashboard_id):
+        raise HTTPException(404, "Dashboard not found")
+    return {"ok": True}
+
+
+@app.post("/api/dashboards/{dashboard_id}/tiles")
+def add_tile_route(dashboard_id: str, req: TileCreate):
+    payload = req.model_dump(exclude_none=True)
+    if "layout" in payload and isinstance(payload["layout"], dict):
+        pass  # already a dict
+    tile = dashboards_store.add_tile(dashboard_id, payload)
+    if tile is None:
+        raise HTTPException(404, "Dashboard not found")
+    return tile
+
+
+@app.put("/api/dashboards/{dashboard_id}/tiles/{tile_id}")
+def update_tile_route(dashboard_id: str, tile_id: str, req: TilePatch):
+    patch = req.model_dump(exclude_none=True)
+    tile = dashboards_store.update_tile(dashboard_id, tile_id, patch)
+    if tile is None:
+        raise HTTPException(404, "Tile or dashboard not found")
+    return tile
+
+
+@app.delete("/api/dashboards/{dashboard_id}/tiles/{tile_id}")
+def delete_tile_route(dashboard_id: str, tile_id: str):
+    if not dashboards_store.delete_tile(dashboard_id, tile_id):
+        raise HTTPException(404, "Tile or dashboard not found")
+    return {"ok": True}
+
+
+@app.put("/api/dashboards/{dashboard_id}/layout")
+def update_layout_route(dashboard_id: str, req: LayoutsUpdate):
+    layouts = [ly.model_dump() for ly in req.layouts]
+    if not dashboards_store.update_layout(dashboard_id, layouts):
+        raise HTTPException(404, "Dashboard not found")
+    return {"ok": True}
 
 
 # Mount the built frontend last so that /api/* routes still resolve first.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date
 from typing import Any, Iterator
 
 import anthropic
@@ -38,6 +39,30 @@ Rules:
 - If no exact match, fall back to LIKE LOWER(col) LIKE LOWER('%term%') on the most plausible column.
 - Use `run_sql` for data questions, `export_sql` for download/file requests.
 - After results: 2-3 sentence summary. Don't repeat the table — the UI renders it.
+- Never invent tables or columns."""
+
+PREVIEW_SYSTEM_PROMPT = """You are a senior data analyst embedded in a database chat UI. The user asks questions in natural language (often Spanish); you respond with a proposed SQL query but you DO NOT execute anything. The UI will let the user inspect the SQL and trigger execution explicitly.
+
+The first user turn gives you:
+- <database_schema> — tables, columns, types. For low-cardinality columns the EXACT distinct values are listed inline as `values: [...]`.
+- <foreign_keys> — relationships for JOINs.
+- <business_context> — business rules, borrower catalog, schema notes, variables dictionary. Treat these as authoritative.
+- <memory>, <business_glossary> — additional context.
+
+Your response format MUST be:
+1. One short paragraph (1-2 sentences in Spanish) explaining what the query does and which tables/filters it uses.
+2. Exactly ONE fenced code block with the SQL, language tag `sql`:
+   ```sql
+   SELECT ...
+   ```
+3. Optionally, a final short paragraph (1-2 sentences) with caveats, performance notes, or alternative variants.
+
+Rules:
+- Only SELECT / WITH / SHOW / DESCRIBE / EXPLAIN. Never write/modify queries.
+- Always include LIMIT. Default 100 unless the user asks for "top N" or "últimos N".
+- Match user-mentioned entities to the EXACT values in the `values: [...]` lists (case/space-insensitive).
+- For payment_tape and other large tables, ALWAYS filter by company_id or borrower_code first to use the primary index. If the user asks something that would scan the whole table, point that out in the caveats and suggest a narrower filter.
+- NEVER call any tool. NEVER execute SQL. NEVER hallucinate results. Just propose the SQL.
 - Never invent tables or columns."""
 
 TOOLS: list[dict[str, Any]] = [
@@ -133,6 +158,7 @@ def stream_chat(
     cfg: DbConfig,
     user_message: str,
     history: list[dict[str, Any]],
+    mode: str = "preview",
 ) -> Iterator[dict[str, Any]]:
     """Dispatch to the right chat backend based on the resolved auth.
 
@@ -160,7 +186,7 @@ def stream_chat(
     messages: list[dict[str, Any]] = list(history)
     if not messages:
         try:
-            context_block = build_prompt_context(cfg)
+            context_block = build_prompt_context(cfg, user_message=user_message)
             user_content = f"{context_block}\n\n{user_message}"
         except Exception as e:
             yield {"type": "error", "error": f"Could not load context: {e}"}
@@ -169,13 +195,56 @@ def stream_chat(
     else:
         messages.append({"role": "user", "content": user_message})
 
+    base_prompt = PREVIEW_SYSTEM_PROMPT if mode == "preview" else SYSTEM_PROMPT
+    today = date.today()
+    weekday_es = [
+        "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"
+    ][today.weekday()]
+    date_line = (
+        f"\n\nToday is {weekday_es} {today.isoformat()}. "
+        f"When the user says 'hoy', 'ayer', 'la última semana', 'el último mes', "
+        f"compute the dates relative to this. Prefer literal dates in SQL "
+        f"(e.g. WHERE payment_date >= '{today.isoformat()}') over CURDATE()/NOW() "
+        f"so the query result is deterministic and the date filter is obvious."
+    )
+    base_prompt = base_prompt + date_line
+
     # OAuth tokens require the Claude-Code identifier at the start of the system prompt.
     if auth.get("auth_token"):
         system_prompt = (
-            "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + SYSTEM_PROMPT
+            "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + base_prompt
         )
     else:
-        system_prompt = SYSTEM_PROMPT
+        system_prompt = base_prompt
+
+    # In preview mode the model proposes SQL but never executes — no tools and no loop.
+    if mode == "preview":
+        try:
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=4096,
+                system=system_prompt,
+                messages=messages,
+            )
+        except anthropic.APIStatusError as e:
+            yield {"type": "error", "error": f"Anthropic API error ({e.status_code}): {e.message}"}
+            return
+        except anthropic.APIConnectionError as e:
+            yield {"type": "error", "error": f"Could not reach Anthropic: {e}"}
+            return
+        except Exception as e:
+            log.exception("Unexpected error calling Anthropic")
+            yield {"type": "error", "error": f"Unexpected error: {e}"}
+            return
+
+        assistant_blocks: list[dict[str, Any]] = []
+        for block in response.content:
+            if block.type == "text":
+                assistant_blocks.append({"type": "text", "text": block.text})
+                yield {"type": "text", "text": block.text}
+        messages.append({"role": "assistant", "content": assistant_blocks})
+        yield {"type": "done", "messages": messages}
+        return
 
     for _ in range(MAX_TOOL_ITERATIONS):
         try:

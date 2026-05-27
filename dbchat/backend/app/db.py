@@ -139,14 +139,25 @@ def _open_connection(cfg: DbConfig) -> pymysql.connections.Connection:
     return conn
 
 
-def run_select(cfg: DbConfig, sql: str, max_rows: int) -> QueryResult:
+def run_select(
+    cfg: DbConfig,
+    sql: str,
+    max_rows: int,
+    max_seconds: int | None = None,
+) -> QueryResult:
     start = time.perf_counter()
+    log.info("Executing SQL (max_rows=%d, max_seconds=%s): %s",
+             max_rows, max_seconds, sql.replace("\n", " ")[:500])
     conn = _open_connection(cfg)
     try:
         with conn.cursor() as cur:
-            # Per-query server-side limit. Stay below the connection-level
-            # read_timeout so we get a clean error before the socket gives up.
-            max_exec_ms = max(int(cfg.read_timeout * 1000 * 0.9), 30_000)
+            # Per-query server-side limit. If the caller supplies max_seconds,
+            # honor it; otherwise stay below the connection-level read_timeout
+            # so we get a clean error before the socket gives up.
+            if max_seconds is not None:
+                max_exec_ms = max(int(max_seconds * 1000), 1000)
+            else:
+                max_exec_ms = max(int(cfg.read_timeout * 1000 * 0.9), 30_000)
             try:
                 cur.execute(f"SET SESSION MAX_EXECUTION_TIME = {max_exec_ms}")
             except pymysql.MySQLError:
@@ -204,7 +215,11 @@ def friendly_error(e: Exception) -> str:
         if code == 1049:
             return "Unknown database. Check MYSQL_DATABASE."
         if code in (3024, 1317):
-            return "Query timed out. Refine the query or raise MYSQL_READ_TIMEOUT."
+            return (
+                "Query timed out (>5 min). Probably scans too many rows. "
+                "Add a WHERE on company_id / borrower_code / payment_date "
+                "so MySQL can use an index, then run it again."
+            )
     if isinstance(e, pymysql.err.ProgrammingError):
         return f"SQL error: {e.args[1] if len(e.args) > 1 else e}"
     return f"{type(e).__name__}: {e}"

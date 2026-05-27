@@ -124,7 +124,7 @@ def stream_chat_cli(
 ) -> Iterator[dict[str, Any]]:
     """Single-shot chat through the `claude` CLI."""
     try:
-        context_block = build_prompt_context(cfg)
+        context_block = build_prompt_context(cfg, user_message=user_message)
     except Exception as e:
         yield {"type": "error", "error": f"Could not load schema: {e}"}
         return

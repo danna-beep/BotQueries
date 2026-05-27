@@ -17,6 +17,11 @@ from .sql_safety import apply_default_limit, validate_read_only_sql
 DEFAULT_ROW_LIMIT = 1000
 MAX_ROW_LIMIT = 100_000
 
+# Interactive chat/query timeout: enough for real reports on big tables, but
+# bounded so a runaway query (missing index, full scan) fails clearly instead
+# of hanging the UI. Exports keep the connection-level (long) timeout.
+INTERACTIVE_QUERY_TIMEOUT_S = 300
+
 log = logging.getLogger(__name__)
 
 # Identifier whitelist for safe table-name interpolation.
@@ -137,7 +142,7 @@ def execute_query(cfg: DbConfig, sql: str, max_rows: int = DEFAULT_ROW_LIMIT) ->
     if not validation.ok:
         raise ValueError(f"SQL rejected: {validation.reason}")
     safe_sql = apply_default_limit(validation.normalized_sql, max_rows)
-    return run_select(cfg, safe_sql, max_rows=max_rows)
+    return run_select(cfg, safe_sql, max_rows=max_rows, max_seconds=INTERACTIVE_QUERY_TIMEOUT_S)
 
 
 def execute_query_streamed(
@@ -163,7 +168,7 @@ def execute_query_streamed(
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="dbchat-sql"
     ) as ex:
-        future = ex.submit(run_select, cfg, safe_sql, max_rows)
+        future = ex.submit(run_select, cfg, safe_sql, max_rows, INTERACTIVE_QUERY_TIMEOUT_S)
         start = time.monotonic()
         while True:
             try:
@@ -322,8 +327,8 @@ def enrich_with_distinct_values(cfg: DbConfig, ctx: dict[str, Any]) -> int:
 def build_enriched_context(
     cfg: DbConfig,
     schema: dict[str, Any] | None = None,
-    samples_per_table: int = 2,
-    with_distinct_values: bool = True,
+    samples_per_table: int = 0,
+    with_distinct_values: bool = False,
 ) -> dict[str, Any]:
     """Schema + sample rows + foreign keys + distinct values for entity columns."""
     s = schema or get_full_schema(cfg)
