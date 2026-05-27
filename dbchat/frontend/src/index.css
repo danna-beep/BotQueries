@@ -3,29 +3,30 @@
 @tailwind utilities;
 
 @layer base {
-  /* Vaas brand — dark (wine) theme. */
+  /* Vaas brand — dark theme: wine canvas with slightly-lifted wine panels. */
   :root,
   .dark {
-    --bg: 37 27 49;        /* #251B31 wine oscurecido */
-    --surface: 47 34 64;   /* #2F2240 wine */
-    --surface-2: 58 44 79; /* #3A2C4F wine elevado */
-    --border: 74 60 92;    /* #4A3C5C */
-    --fg: 245 241 250;     /* #F5F1FA */
-    --muted: 169 159 184;  /* #A99FB8 lavanda gris */
-    --accent: 191 101 255; /* #BF65FF primary */
-    --accent-2: 244 159 10;/* #F49F0A warning */
+    --bg: 37 27 51;        /* #251B33 wine oscuro (canvas/fondo) */
+    --surface: 58 44 74;   /* #3A2C4A wine elevado (paneles) */
+    --surface-2: 70 54 88; /* #463658 wine inset (inputs/sub-headers) */
+    --border: 78 61 97;    /* #4E3D61 borde violeta tenue */
+    --fg: 242 238 248;     /* #F2EEF8 texto claro */
+    --muted: 171 160 188;  /* #ABA0BC lavanda gris */
+    --accent: 191 101 255; /* #BF65FF primary violeta */
+    --accent-2: 244 159 10;/* #F49F0A ámbar */
     --danger: 233 69 96;   /* #E94560 error */
   }
 
-  /* Vaas brand — light (white) theme. PRINCIPAL / default. */
+  /* Vaas brand — light theme. PRINCIPAL / default.
+     Wine-lavender canvas so the frosted panels pick up the wine through blur. */
   html.light {
-    --bg: 250 249 251;     /* #FAF9FB */
-    --surface: 255 255 255;/* #FFFFFF */
-    --surface-2: 245 242 248;/* #F5F2F8 tinte violeta */
-    --border: 226 220 234; /* #E2DCEA */
+    --bg: 232 224 240;     /* #E8E0F0 wine-lavanda (canvas) */
+    --surface: 255 255 255;/* #FFFFFF tarjetas */
+    --surface-2: 245 242 248;/* #F5F2F8 insets */
+    --border: 223 214 235; /* #DFD6EB */
     --fg: 26 19 37;        /* #1A1325 */
     --muted: 102 90 119;   /* #665A77 textSecondary */
-    --accent: 180 92 250;  /* #B45CFA violeta */
+    --accent: 168 78 240;  /* #A84EF0 violeta (contraste sobre claro) */
     --accent-2: 195 127 8; /* #C37F08 darkWarning */
     --danger: 233 69 96;   /* #E94560 error */
   }
@@ -104,15 +105,28 @@
 
 @layer components {
   .panel {
-    @apply bg-surface border border-border rounded-xl;
+    background: rgb(var(--surface) / 0.85);
+    backdrop-filter: blur(8px);
+    @apply border border-border rounded-xl;
     box-shadow:
-      0 1px 0 0 rgb(255 255 255 / 0.02) inset,
-      0 1px 2px 0 rgb(0 0 0 / 0.06),
-      0 8px 24px -12px rgb(0 0 0 / 0.25);
+      0 1px 0 0 rgb(255 255 255 / 0.03) inset,
+      0 1px 2px 0 rgb(0 0 0 / 0.08),
+      0 8px 24px -12px rgb(0 0 0 / 0.3);
+  }
+  /* Light theme: more transparency so the wine canvas shows through the glass. */
+  html.light .panel {
+    background: rgb(var(--surface) / 0.7);
+    box-shadow:
+      0 1px 2px 0 rgb(47 34 64 / 0.06),
+      0 10px 28px -14px rgb(47 34 64 / 0.22);
   }
 
   .panel-inset {
-    @apply bg-surface2 border border-border/70 rounded-lg;
+    background: rgb(var(--surface-2) / 0.8);
+    @apply border border-border/70 rounded-lg;
+  }
+  html.light .panel-inset {
+    background: rgb(var(--surface-2) / 0.62);
   }
 
   .btn {
@@ -145,9 +159,9 @@
     @apply font-mono text-[10px] tracking-[0.16em] text-muted/90 uppercase;
   }
 
-  /* Subtle violet glow — toned down so it works on the light theme too. */
+  /* Violet glow — subtle in light, stronger over the dark wine panels. */
   .terminal-glow {
-    text-shadow: 0 0 24px rgb(var(--accent) / 0.18);
+    text-shadow: 0 0 22px rgb(var(--accent) / 0.18);
   }
   .dark .terminal-glow {
     text-shadow:
