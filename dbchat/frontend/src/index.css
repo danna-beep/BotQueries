@@ -3,29 +3,31 @@
 @tailwind utilities;
 
 @layer base {
+  /* Vaas brand — dark (wine) theme. */
   :root,
   .dark {
-    --bg: 8 10 8;
-    --surface: 14 18 14;
-    --surface-2: 20 26 20;
-    --border: 38 46 38;
-    --fg: 230 235 228;
-    --muted: 130 145 130;
-    --accent: 125 255 155;
-    --accent-2: 255 217 102;
-    --danger: 255 95 95;
+    --bg: 37 27 49;        /* #251B31 wine oscurecido */
+    --surface: 47 34 64;   /* #2F2240 wine */
+    --surface-2: 58 44 79; /* #3A2C4F wine elevado */
+    --border: 74 60 92;    /* #4A3C5C */
+    --fg: 245 241 250;     /* #F5F1FA */
+    --muted: 169 159 184;  /* #A99FB8 lavanda gris */
+    --accent: 191 101 255; /* #BF65FF primary */
+    --accent-2: 244 159 10;/* #F49F0A warning */
+    --danger: 233 69 96;   /* #E94560 error */
   }
 
+  /* Vaas brand — light (white) theme. PRINCIPAL / default. */
   html.light {
-    --bg: 250 250 246;
-    --surface: 255 255 251;
-    --surface-2: 245 245 240;
-    --border: 220 222 214;
-    --fg: 18 22 18;
-    --muted: 105 115 105;
-    --accent: 26 156 70;
-    --accent-2: 184 124 8;
-    --danger: 196 32 32;
+    --bg: 250 249 251;     /* #FAF9FB */
+    --surface: 255 255 255;/* #FFFFFF */
+    --surface-2: 245 242 248;/* #F5F2F8 tinte violeta */
+    --border: 226 220 234; /* #E2DCEA */
+    --fg: 26 19 37;        /* #1A1325 */
+    --muted: 102 90 119;   /* #665A77 textSecondary */
+    --accent: 180 92 250;  /* #B45CFA violeta */
+    --accent-2: 195 127 8; /* #C37F08 darkWarning */
+    --danger: 233 69 96;   /* #E94560 error */
   }
 
   html,
@@ -36,7 +38,6 @@
 
   body {
     @apply bg-bg text-fg font-sans antialiased;
-    font-feature-settings: "cv11", "ss01", "ss02";
     position: relative;
     overflow: hidden;
   }
@@ -47,8 +48,18 @@
     inset: 0;
     pointer-events: none;
     z-index: 0;
-    opacity: 0.025;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    opacity: 0.6;
+    background:
+      radial-gradient(
+        ellipse 80% 50% at 50% -10%,
+        rgb(var(--accent) / 0.06),
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 60% 50% at 100% 100%,
+        rgb(var(--accent-2) / 0.04),
+        transparent 50%
+      );
   }
 
   #root {
@@ -93,29 +104,35 @@
 
 @layer components {
   .panel {
-    @apply bg-surface border border-border rounded-lg;
+    @apply bg-surface border border-border rounded-xl;
+    box-shadow:
+      0 1px 0 0 rgb(255 255 255 / 0.02) inset,
+      0 1px 2px 0 rgb(0 0 0 / 0.06),
+      0 8px 24px -12px rgb(0 0 0 / 0.25);
   }
 
   .panel-inset {
-    @apply bg-surface2 border border-border rounded-md;
+    @apply bg-surface2 border border-border/70 rounded-lg;
   }
 
   .btn {
-    @apply inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md
-           border border-border bg-surface2 text-fg text-xs font-medium
-           hover:bg-surface hover:border-muted/40 transition-colors
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md
+           border border-border/70 bg-surface2/80 text-fg/90 text-[12px] font-medium
+           hover:bg-surface hover:border-muted/40 hover:text-fg
+           transition-all duration-150
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-primary {
-    @apply btn bg-accent/15 border-accent/40 text-accent
-           hover:bg-accent/25 hover:border-accent/60;
+    @apply btn bg-accent/10 border-accent/30 text-accent
+           hover:bg-accent/20 hover:border-accent/50;
+    box-shadow: 0 0 0 1px rgb(var(--accent) / 0.06) inset;
   }
 
   .chip {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full
-           bg-surface2 border border-border text-[11px] font-mono uppercase
-           tracking-wide text-muted;
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full
+           bg-surface2/70 border border-border/60 text-[11px]
+           tracking-tight text-muted;
   }
 
   .kbd {
@@ -124,22 +141,57 @@
            text-muted leading-none;
   }
 
+  .label-mono {
+    @apply font-mono text-[10px] tracking-[0.16em] text-muted/90 uppercase;
+  }
+
+  /* Subtle violet glow — toned down so it works on the light theme too. */
   .terminal-glow {
-    text-shadow: 0 0 22px rgb(var(--accent) / 0.35),
-      0 0 4px rgb(var(--accent) / 0.4);
+    text-shadow: 0 0 24px rgb(var(--accent) / 0.18);
+  }
+  .dark .terminal-glow {
+    text-shadow:
+      0 0 32px rgb(var(--accent) / 0.3),
+      0 0 6px rgb(var(--accent) / 0.2);
+  }
+
+  .kpi-tile {
+    background:
+      radial-gradient(
+        ellipse 70% 80% at 50% 0%,
+        rgb(var(--accent) / 0.08),
+        transparent 70%
+      ),
+      rgb(var(--surface) / 0.6);
+    border: 1px solid rgb(var(--border));
+    border-radius: 14px;
   }
 
   .prose-chat {
-    @apply text-sm leading-relaxed text-fg/90;
+    @apply text-[13.5px] leading-[1.65] text-fg/90;
   }
   .prose-chat p {
     @apply mb-2 last:mb-0;
   }
   .prose-chat code {
-    @apply font-mono text-[12px] px-1 py-0.5 rounded bg-surface2 text-accent;
+    @apply font-mono text-[12px] px-1.5 py-0.5 rounded bg-surface2
+           border border-border/60 text-accent;
   }
   .prose-chat strong {
     @apply font-semibold text-fg;
+  }
+
+  /* Vaas typographic scale — available for use across components. */
+  .v-h1 { font-size: 32px; font-weight: 700; line-height: 48px; }
+  .v-h2 { font-size: 24px; font-weight: 700; line-height: 36px; }
+  .v-h3 { font-size: 20px; font-weight: 700; line-height: 30px; }
+  .v-h4 { font-size: 18px; font-weight: 700; line-height: 27px; }
+  .v-h5 { font-size: 16px; font-weight: 700; line-height: 24px; }
+  .v-h6 { font-size: 14px; font-weight: 700; line-height: 21px; }
+  .v-body1 { font-size: 14px; font-weight: 400; }
+  .v-body2 { font-size: 12px; font-weight: 400; }
+  .v-caption {
+    font-size: 11px; font-weight: 500; line-height: 13px; letter-spacing: 0.33px;
   }
 }
 
@@ -148,4 +200,33 @@
     width: 6px;
     height: 6px;
   }
+}
+
+/* react-grid-layout overrides */
+.react-grid-item.react-grid-placeholder {
+  background: rgb(var(--accent) / 0.12) !important;
+  border: 1px dashed rgb(var(--accent) / 0.45) !important;
+  border-radius: 12px !important;
+  opacity: 1 !important;
+  transition: none !important;
+}
+.react-grid-item > .react-resizable-handle {
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.react-grid-item:hover > .react-resizable-handle {
+  opacity: 0.5;
+}
+.react-grid-item > .react-resizable-handle::after {
+  border-right-color: rgb(var(--muted)) !important;
+  border-bottom-color: rgb(var(--muted)) !important;
+}
+.react-grid-item.react-draggable-dragging {
+  z-index: 30;
+  cursor: grabbing !important;
+}
+.react-grid-item.react-draggable-dragging .panel {
+  box-shadow:
+    0 18px 40px -8px rgb(0 0 0 / 0.5),
+    0 0 0 1px rgb(var(--accent) / 0.3) !important;
 }

@@ -35,25 +35,23 @@ export default function TopBar({
   }
 
   return (
-    <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface/60 backdrop-blur-sm">
-      <div className="flex items-baseline gap-4">
-        <div className="flex items-baseline gap-2">
-          <h1 className="font-display italic text-2xl leading-none text-fg terminal-glow">
-            DBChat
-          </h1>
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
-            query mysql in plain english
-          </span>
-        </div>
+    <header className="flex items-center justify-between px-5 py-3 border-b border-border/80 bg-surface/40 backdrop-blur-sm">
+      <div className="flex items-center gap-3">
+        <h1 className="font-display italic text-[26px] leading-none text-fg terminal-glow">
+          DBChat
+        </h1>
+        <span className="hidden md:inline text-[11.5px] text-muted tracking-tight">
+          Pregúntale a tu base de datos en lenguaje natural.
+        </span>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <button
           onClick={onOpenConnection}
           className={cn(
-            "flex items-center gap-2 px-2.5 py-1 rounded-full border text-[11px] font-mono",
+            "flex items-center gap-2 px-3 py-1.5 rounded-full border text-[12px] font-medium tracking-tight transition-all duration-150",
             pillState === "ok" &&
-              "border-accent/40 bg-accent/10 text-accent hover:bg-accent/15",
+              "border-accent/30 bg-accent/8 text-accent hover:bg-accent/15 hover:border-accent/50",
             pillState === "err" &&
               "border-danger/40 bg-danger/10 text-danger hover:bg-danger/15",
             pillState === "warn" &&
@@ -61,29 +59,32 @@ export default function TopBar({
           )}
           title={
             pillState === "ok"
-              ? `${host || "?"}${dbName ? " · " + dbName : ""} — click to edit`
-              : errText || "Click to configure the database connection"
+              ? `${host || "?"}${dbName ? " · " + dbName : ""} — click para editar`
+              : errText || "Click para configurar la conexión"
           }
         >
           <span
             className={cn(
-              "w-1.5 h-1.5 rounded-full",
+              "w-2 h-2 rounded-full",
               pillState === "ok" && "bg-accent animate-pulse-dot",
               pillState === "err" && "bg-danger",
               pillState === "warn" && "bg-accent2 animate-pulse-dot"
             )}
           />
-          <Database size={11} />
-          <span className="uppercase tracking-wide">{pillLabel}</span>
-          <Settings size={10} className="opacity-70" />
+          <Database size={12} strokeWidth={1.8} />
+          <span className="max-w-[180px] truncate">{pillLabel}</span>
         </button>
 
         <button
           onClick={onToggleTheme}
-          className="btn h-7 w-7 justify-center !p-0"
-          title="Toggle theme"
+          className="btn h-8 w-8 justify-center !p-0 rounded-full"
+          title={theme === "dark" ? "Modo claro" : "Modo oscuro"}
         >
-          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+          {theme === "dark" ? (
+            <Sun size={14} strokeWidth={1.7} />
+          ) : (
+            <Moon size={14} strokeWidth={1.7} />
+          )}
         </button>
       </div>
     </header>

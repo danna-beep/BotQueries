@@ -26,14 +26,14 @@ export default function SchemaPanel({ schema, onRefresh, onTableClick }) {
 
   return (
     <aside className="panel flex flex-col h-full overflow-hidden animate-fade-in">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <div className="flex items-center gap-2 text-muted">
-          <Database size={13} />
-          <span className="font-mono text-[11px] uppercase tracking-[0.18em]">
-            schema
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+        <div className="flex items-center gap-2 min-w-0">
+          <Database size={14} className="text-accent" strokeWidth={1.8} />
+          <span className="text-[12.5px] font-medium tracking-tight text-fg/90">
+            Tablas
           </span>
           {schema?.database && (
-            <span className="font-mono text-[11px] text-accent/80 ml-1">
+            <span className="text-[11px] text-muted truncate">
               · {schema.database}
             </span>
           )}
@@ -41,24 +41,25 @@ export default function SchemaPanel({ schema, onRefresh, onTableClick }) {
         <button
           onClick={onRefresh}
           className="text-muted hover:text-fg transition-colors"
-          title="Refresh schema"
+          title="Actualizar"
         >
-          <RefreshCw size={12} />
+          <RefreshCw size={13} strokeWidth={1.8} />
         </button>
       </div>
 
-      <div className="px-3 py-2 border-b border-border">
+      <div className="px-3 py-2.5 border-b border-border">
         <div className="relative">
           <Search
             size={12}
-            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
           />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="filter tables, columns…"
-            className="w-full pl-7 pr-2 py-1.5 rounded-md bg-surface2 border border-border
-                       text-xs font-mono placeholder:text-muted/70 focus:border-accent/50"
+            placeholder="Buscar tablas, columnas…"
+            className="w-full pl-7.5 pr-2 py-1.5 rounded-md bg-surface2 border border-border
+                       text-[12.5px] placeholder:text-muted/70 focus:border-accent/50 outline-none"
+            style={{ paddingLeft: "1.875rem" }}
           />
         </div>
       </div>

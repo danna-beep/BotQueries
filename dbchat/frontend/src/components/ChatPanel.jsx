@@ -4,19 +4,137 @@ import {
   FileDown,
   Key,
   Loader2,
+  Play,
   Send,
   ShieldCheck,
   Sparkles,
   X,
 } from "lucide-react";
-import { downloadUrl, streamChat } from "../lib/api.js";
+import { downloadUrl, runQuery, streamChat } from "../lib/api.js";
 import { cn, formatNumber } from "../lib/utils.js";
 
+// Parses an assistant text message and splits it into prose paragraphs and
+// fenced ```sql code blocks. Used by preview mode to render an "Ejecutar query"
+// button next to each proposed SQL block.
+function splitTextWithSqlBlocks(text) {
+  const re = /```sql\s*\n([\s\S]*?)```/gi;
+  const parts = [];
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) {
+      const prose = text.slice(last, m.index).trim();
+      if (prose) parts.push({ kind: "prose", text: prose });
+    }
+    parts.push({ kind: "sql", sql: m[1].trim() });
+    last = m.index + m[0].length;
+  }
+  const tail = text.slice(last).trim();
+  if (tail) parts.push({ kind: "prose", text: tail });
+  return parts;
+}
+
+function SqlProposalBlock({ sql, onResult }) {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const run = async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const r = await runQuery(sql);
+      setResult(r);
+      onResult &&
+        onResult({
+          sql,
+          columns: r.columns,
+          rows: r.rows,
+          row_count: r.row_count,
+          elapsed_ms: r.elapsed_ms,
+          truncated: r.truncated,
+        });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="panel-inset my-3 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border/70 bg-bg/30">
+        <span className="w-1.5 h-1.5 rounded-full bg-accent/70" />
+        <span className="text-[11.5px] font-medium tracking-tight text-fg/85">
+          SQL propuesto
+        </span>
+        <button
+          onClick={run}
+          disabled={running}
+          className={cn(
+            "ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-md border transition-all",
+            result
+              ? "border-accent/40 bg-accent/10 text-accent"
+              : "border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 hover:border-accent/50",
+            running && "opacity-60 cursor-wait"
+          )}
+          style={
+            !result && !running
+              ? { boxShadow: "0 0 0 1px rgb(var(--accent) / 0.05) inset" }
+              : undefined
+          }
+        >
+          {running ? (
+            <>
+              <Loader2 size={11} className="animate-spin" />
+              ejecutando…
+            </>
+          ) : result ? (
+            <>
+              <Check size={11} strokeWidth={2.5} />
+              listo
+            </>
+          ) : (
+            <>
+              <Play size={11} strokeWidth={2.2} />
+              ejecutar
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="px-4 py-3 text-[12px] leading-[1.6] font-mono text-fg/90 overflow-x-auto whitespace-pre-wrap break-words">
+        {sql}
+      </pre>
+      {result && !error && (
+        <div className="px-3 py-2 border-t border-border/70 bg-bg/30 flex items-center gap-2 flex-wrap text-[11px] font-mono">
+          <span className="w-1 h-1 rounded-full bg-accent" />
+          <span className="text-accent tabular-nums">
+            {formatNumber(result.row_count)} rows
+          </span>
+          <span className="text-muted/60">·</span>
+          <span className="text-muted tabular-nums">{result.elapsed_ms}ms</span>
+          {result.truncated && (
+            <>
+              <span className="text-muted/60">·</span>
+              <span className="text-accent2">truncated</span>
+            </>
+          )}
+        </div>
+      )}
+      {error && (
+        <div className="px-3 py-2 border-t border-danger/40 bg-danger/10 text-danger text-[11px] font-mono">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const EXAMPLES = [
-  "list the 10 most recent rows in the largest table",
-  "which tables have the word 'user' in them?",
-  "give me a count of rows per table",
-  "export the top 100 results of the most interesting query",
+  "Cuántos pagos hizo ADDI ayer",
+  "Top 10 borrowers por volumen de pagos este mes",
+  "Pagos no conciliados de SOMOS de la última semana",
+  "Distribución de pagos por gateway para ADDI",
 ];
 
 function ToolCallBlock({ part }) {
@@ -112,22 +230,33 @@ function ToolCallBlock({ part }) {
   );
 }
 
-function AssistantMessage({ msg }) {
+function AssistantMessage({ msg, onResult }) {
   return (
     <div className="animate-slide-up">
-      <div className="flex items-center gap-2 mb-1">
-        <Sparkles size={11} className="text-accent" />
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-accent">
-          claude
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-accent/10 border border-accent/25">
+          <Sparkles size={11} className="text-accent" strokeWidth={1.8} />
+        </span>
+        <span className="text-[11px] font-medium tracking-tight text-accent">
+          Claude
         </span>
       </div>
       <div className="prose-chat">
         {msg.parts.map((p, i) => {
           if (p.type === "text") {
+            const blocks = splitTextWithSqlBlocks(p.text);
             return (
-              <p key={i} className="whitespace-pre-wrap">
-                {p.text}
-              </p>
+              <div key={i}>
+                {blocks.map((b, j) =>
+                  b.kind === "sql" ? (
+                    <SqlProposalBlock key={j} sql={b.sql} onResult={onResult} />
+                  ) : (
+                    <p key={j} className="whitespace-pre-wrap">
+                      {b.text}
+                    </p>
+                  )
+                )}
+              </div>
             );
           }
           if (p.type === "tool_call") {
@@ -149,7 +278,7 @@ function AssistantMessage({ msg }) {
 function UserMessage({ msg }) {
   return (
     <div className="flex justify-end animate-slide-up">
-      <div className="panel-inset px-3 py-2 max-w-[85%] text-sm">
+      <div className="px-3.5 py-2 max-w-[85%] text-[13.5px] leading-relaxed rounded-2xl rounded-tr-md bg-accent/10 border border-accent/20 text-fg">
         {msg.text}
       </div>
     </div>
@@ -327,13 +456,13 @@ export default function ChatPanel({
 
   return (
     <section className="panel flex flex-col h-full overflow-hidden animate-fade-in">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <Sparkles size={13} className="text-accent" />
-        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
-          chat
+      <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-border">
+        <Sparkles size={14} className="text-accent" strokeWidth={1.8} />
+        <span className="text-[12.5px] font-medium tracking-tight text-fg/90">
+          Chat
         </span>
         {streaming && (
-          <span className="flex items-center gap-1 text-[10px] font-mono text-accent">
+          <span className="flex items-center gap-1.5 text-[11px] font-mono text-accent">
             <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
             thinking…
           </span>
@@ -390,23 +519,25 @@ export default function ChatPanel({
 
       <div ref={scrollRef} className="flex-1 overflow-auto scrollbar-thin px-3 py-4 space-y-4">
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center px-4">
-            <p className="font-display italic text-3xl leading-tight text-fg/80">
-              Talk to your{" "}
-              <span className="text-accent terminal-glow">database</span>.
+          <div className="h-full flex flex-col items-center justify-center text-center px-6">
+            <p className="font-display italic text-[42px] leading-[1.05] text-fg/85">
+              Habla con tu{" "}
+              <span className="text-accent terminal-glow">base de datos</span>.
             </p>
-            <p className="mt-2 text-[11px] font-mono text-muted uppercase tracking-wide">
-              natural language → safe SQL
+            <p className="mt-3 text-[12px] text-muted tracking-tight max-w-sm">
+              Pregunta en lenguaje natural. Claude propone el SQL; tú decides cuándo ejecutarlo.
             </p>
-            <div className="mt-6 w-full grid gap-2">
+            <div className="mt-8 w-full grid gap-1.5">
+              <span className="label-mono mb-1 text-left">Ejemplos</span>
               {EXAMPLES.map((ex) => (
                 <button
                   key={ex}
                   onClick={() => send(ex)}
                   disabled={!dbOk || !canChat}
-                  className="panel-inset text-left px-3 py-2 text-xs font-mono text-fg/80 hover:border-accent/40 hover:text-fg disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="panel-inset text-left px-3.5 py-2.5 text-[12.5px] text-fg/80 hover:border-accent/40 hover:text-fg hover:bg-accent/[0.03] transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed group"
                 >
-                  → {ex}
+                  <span className="text-muted/60 mr-2 group-hover:text-accent">→</span>
+                  {ex}
                 </button>
               ))}
             </div>
@@ -416,7 +547,7 @@ export default function ChatPanel({
             m.role === "user" ? (
               <UserMessage key={i} msg={m} />
             ) : (
-              <AssistantMessage key={i} msg={m} />
+              <AssistantMessage key={i} msg={m} onResult={onResult} />
             )
           )
         )}
@@ -444,14 +575,14 @@ export default function ChatPanel({
             disabled={streaming || !dbOk || !canChat}
             placeholder={
               !dbOk
-                ? "database disconnected"
+                ? "Base de datos desconectada"
                 : !canChat
-                ? "no Anthropic credentials — set an API key or use Claude Code"
-                : "ask anything about your data…"
+                ? "Configura una API key de Anthropic para chatear"
+                : "Pregúntale a tus datos…"
             }
             rows={2}
-            className="w-full pr-10 px-3 py-2 rounded-md bg-surface2 border border-border
-                       text-sm placeholder:text-muted/70 resize-none focus:border-accent/40"
+            className="w-full pr-10 px-3 py-2.5 rounded-lg bg-surface2 border border-border
+                       text-[13.5px] placeholder:text-muted/70 resize-none focus:border-accent/40 transition-colors"
           />
           <button
             onClick={() => send()}
@@ -468,10 +599,10 @@ export default function ChatPanel({
             )}
           </button>
         </div>
-        <div className="mt-1.5 flex items-center gap-2 text-[10px] font-mono text-muted">
-          <span className="kbd">Enter</span> send
-          <span className="kbd">Shift</span>+<span className="kbd">Enter</span>{" "}
-          newline
+        <div className="mt-1.5 flex items-center gap-2 text-[10.5px] text-muted/80">
+          <span className="kbd">Enter</span> enviar
+          <span className="text-muted/40">·</span>
+          <span className="kbd">Shift</span>+<span className="kbd">Enter</span> nueva línea
         </div>
       </div>
     </section>

@@ -5,7 +5,9 @@ async function jsonOrThrow(res) {
     let detail = `HTTP ${res.status}`;
     try {
       const j = await res.json();
-      if (j && j.detail) detail = j.detail;
+      if (j && j.detail) {
+        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      }
     } catch {
       // ignore
     }
@@ -143,7 +145,80 @@ export function downloadUrl(filename) {
   return `${BASE}/download/${encodeURIComponent(filename)}`;
 }
 
-export async function streamChat({ message, history, apiKey, onEvent, signal }) {
+// ---- Dashboards ----
+
+export async function listDashboards() {
+  const res = await fetch(`${BASE}/dashboards`);
+  return jsonOrThrow(res);
+}
+
+export async function createDashboard(name) {
+  const res = await fetch(`${BASE}/dashboards`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function getDashboard(id) {
+  const res = await fetch(`${BASE}/dashboards/${id}`);
+  return jsonOrThrow(res);
+}
+
+export async function renameDashboard(id, name) {
+  const res = await fetch(`${BASE}/dashboards/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function deleteDashboard(id) {
+  const res = await fetch(`${BASE}/dashboards/${id}`, { method: "DELETE" });
+  return jsonOrThrow(res);
+}
+
+export async function addTile(dashboardId, tile) {
+  const res = await fetch(`${BASE}/dashboards/${dashboardId}/tiles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tile),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function updateTile(dashboardId, tileId, patch) {
+  const res = await fetch(
+    `${BASE}/dashboards/${dashboardId}/tiles/${tileId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }
+  );
+  return jsonOrThrow(res);
+}
+
+export async function deleteTile(dashboardId, tileId) {
+  const res = await fetch(
+    `${BASE}/dashboards/${dashboardId}/tiles/${tileId}`,
+    { method: "DELETE" }
+  );
+  return jsonOrThrow(res);
+}
+
+export async function updateDashboardLayout(dashboardId, layouts) {
+  const res = await fetch(`${BASE}/dashboards/${dashboardId}/layout`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ layouts }),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function streamChat({ message, history, apiKey, mode, onEvent, signal }) {
   const res = await fetch(`${BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -151,6 +226,7 @@ export async function streamChat({ message, history, apiKey, onEvent, signal }) 
       message,
       history: history || [],
       api_key: apiKey || null,
+      mode: mode || "preview",
     }),
     signal,
   });
@@ -158,7 +234,9 @@ export async function streamChat({ message, history, apiKey, onEvent, signal }) 
     let detail = `HTTP ${res.status}`;
     try {
       const j = await res.json();
-      if (j && j.detail) detail = j.detail;
+      if (j && j.detail) {
+        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      }
     } catch {
       // ignore
     }

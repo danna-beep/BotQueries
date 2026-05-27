@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, LayoutDashboard, Workflow } from "lucide-react";
 import TopBar from "./components/TopBar.jsx";
 import SchemaPanel from "./components/SchemaPanel.jsx";
 import ResultsPanel from "./components/ResultsPanel.jsx";
 import HistoryPanel from "./components/HistoryPanel.jsx";
 import ChatPanel from "./components/ChatPanel.jsx";
 import ConnectionModal from "./components/ConnectionModal.jsx";
+import DashboardView from "./components/DashboardView.jsx";
+import { cn } from "./lib/utils.js";
 import {
   getConnection,
   getContextSummary,
@@ -30,8 +32,9 @@ export default function App() {
     () => localStorage.getItem(KEY_STORAGE) || ""
   );
   const [theme, setTheme] = useState(
-    () => localStorage.getItem(THEME_STORAGE) || "dark"
+    () => localStorage.getItem(THEME_STORAGE) || "light"
   );
+  const [view, setView] = useState("workspace");
 
   useEffect(() => {
     document.documentElement.className = theme;
@@ -169,119 +172,126 @@ export default function App() {
       />
 
       {bootDone && status && !status.configured && (
-        <div className="px-5 py-2 border-b border-accent2/40 bg-accent2/10 text-accent2 text-xs font-mono flex items-center gap-2">
-          <AlertTriangle size={13} />
-          <span>no database connection configured</span>
+        <div className="px-5 py-2.5 border-b border-accent2/40 bg-accent2/10 text-accent2 text-[12.5px] flex items-center gap-2">
+          <AlertTriangle size={13} strokeWidth={1.8} />
+          <span>No has configurado tu base de datos todavía.</span>
           <button
             onClick={() => setConnModalOpen(true)}
-            className="ml-auto underline hover:text-fg"
+            className="ml-auto font-medium underline-offset-2 hover:underline"
           >
-            configure now →
+            Configurar ahora →
           </button>
         </div>
       )}
 
       {bootDone && status?.configured && !dbOk && (
-        <div className="px-5 py-2 border-b border-danger/40 bg-danger/10 text-danger text-xs font-mono flex items-center gap-2">
-          <AlertTriangle size={13} />
+        <div className="px-5 py-2.5 border-b border-danger/40 bg-danger/10 text-danger text-[12.5px] flex items-center gap-2">
+          <AlertTriangle size={13} strokeWidth={1.8} />
           <span>
-            connection failed
+            No se pudo conectar a la base
             {typeof status.details === "string" ? ` — ${status.details}` : ""}
           </span>
           <button
             onClick={() => setConnModalOpen(true)}
-            className="ml-auto underline hover:text-fg"
+            className="ml-auto font-medium underline-offset-2 hover:underline"
           >
-            edit connection
+            Editar conexión
           </button>
         </div>
       )}
 
       {schemaErr && dbOk && (
-        <div className="px-5 py-2 border-b border-danger/40 bg-danger/10 text-danger text-xs font-mono">
-          schema load failed: {schemaErr}
+        <div className="px-5 py-2 border-b border-danger/40 bg-danger/10 text-danger text-[12.5px]">
+          No se pudo cargar el schema: {schemaErr}
         </div>
       )}
 
-      {dbOk && ctx?.available && (
-        <div className="px-5 py-1.5 border-b border-border bg-surface/40 text-[10px] font-mono text-muted flex items-center gap-3 flex-wrap">
-          <span className="text-accent/80">CONTEXT</span>
-          <span>{ctx.tables} tables</span>
-          <span>·</span>
-          <span>{ctx.sample_rows} sample rows</span>
-          <span>·</span>
-          <span>{ctx.foreign_keys} FKs</span>
-          {ctx.distinct_columns > 0 && (
-            <>
-              <span>·</span>
-              <span className="text-accent">
-                {ctx.distinct_columns} entity cols · {ctx.distinct_values}{" "}
-                values
-              </span>
-            </>
-          )}
-          <span>·</span>
-          <span>
-            glossary{" "}
-            {ctx.glossary_terms_total > 0 ? (
-              <span className="text-accent">
-                {ctx.glossary_terms_matched}/{ctx.glossary_terms_total} matched
-              </span>
-            ) : (
-              <span className="text-muted">none</span>
-            )}
-          </span>
-          <span>·</span>
-          <span>
-            memory{" "}
-            {ctx.memory_entries > 0 ? (
-              <span className="text-accent">{ctx.memory_entries}</span>
-            ) : (
-              <span className="text-muted">empty</span>
-            )}
-          </span>
+      <nav className="flex items-center gap-1 px-4 pt-2 border-b border-border bg-surface/30">
+        {[
+          { id: "workspace", label: "Workspace", icon: Workflow },
+          { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+        ].map(({ id, label, icon: Icon }) => (
           <button
-            onClick={() => setConnModalOpen(true)}
-            className="ml-auto underline hover:text-fg"
+            key={id}
+            onClick={() => setView(id)}
+            className={cn(
+              "flex items-center gap-1.5 px-3.5 py-2 -mb-px border-b-2 text-[13px] font-medium tracking-tight transition-all",
+              view === id
+                ? "border-accent text-fg"
+                : "border-transparent text-muted hover:text-fg"
+            )}
           >
-            edit context →
+            <Icon size={14} strokeWidth={1.8} />
+            {label}
           </button>
-        </div>
+        ))}
+
+        {dbOk && ctx?.available && (
+          <div className="ml-auto flex items-center gap-2 text-[11px] text-muted">
+            <span className="tabular-nums">{ctx.tables} tablas</span>
+            {ctx.distinct_columns > 0 && (
+              <>
+                <span className="text-muted/40">·</span>
+                <span className="text-accent/90 tabular-nums">
+                  {ctx.distinct_values} valores cacheados
+                </span>
+              </>
+            )}
+            {ctx.memory_entries > 0 && (
+              <>
+                <span className="text-muted/40">·</span>
+                <span className="tabular-nums">
+                  {ctx.memory_entries} notas
+                </span>
+              </>
+            )}
+            <button
+              onClick={() => setConnModalOpen(true)}
+              className="ml-2 text-muted/70 hover:text-fg underline-offset-2 hover:underline"
+            >
+              ajustes
+            </button>
+          </div>
+        )}
+      </nav>
+
+      {view === "workspace" ? (
+        <main
+          className="flex-1 min-h-0 grid gap-3 p-3"
+          style={{
+            gridTemplateColumns: "260px minmax(0, 1fr) 380px",
+            gridTemplateRows: "minmax(0, 1fr) auto",
+          }}
+        >
+          <div className="row-span-2 min-h-0">
+            <SchemaPanel
+              schema={schema}
+              onRefresh={loadSchema}
+              onTableClick={onTableClick}
+            />
+          </div>
+
+          <div className="min-h-0">
+            <ResultsPanel result={result} onResult={recordResult} />
+          </div>
+
+          <div className="row-span-2 min-h-0">
+            <ChatPanel
+              apiKey={apiKey}
+              onApiKey={handleApiKey}
+              onResult={recordResult}
+              dbOk={dbOk}
+              authStatus={status?.anthropic_auth}
+            />
+          </div>
+
+          <div className="min-h-0 max-h-[30vh]">
+            <HistoryPanel history={history} onSelect={reloadFromHistory} />
+          </div>
+        </main>
+      ) : (
+        <DashboardView dbOk={dbOk} />
       )}
-
-      <main
-        className="flex-1 min-h-0 grid gap-3 p-3"
-        style={{
-          gridTemplateColumns: "260px minmax(0, 1fr) 380px",
-          gridTemplateRows: "minmax(0, 1fr) auto",
-        }}
-      >
-        <div className="row-span-2 min-h-0">
-          <SchemaPanel
-            schema={schema}
-            onRefresh={loadSchema}
-            onTableClick={onTableClick}
-          />
-        </div>
-
-        <div className="min-h-0">
-          <ResultsPanel result={result} onResult={recordResult} />
-        </div>
-
-        <div className="row-span-2 min-h-0">
-          <ChatPanel
-            apiKey={apiKey}
-            onApiKey={handleApiKey}
-            onResult={recordResult}
-            dbOk={dbOk}
-            authStatus={status?.anthropic_auth}
-          />
-        </div>
-
-        <div className="min-h-0 max-h-[30vh]">
-          <HistoryPanel history={history} onSelect={reloadFromHistory} />
-        </div>
-      </main>
 
       <ConnectionModal
         open={connModalOpen}

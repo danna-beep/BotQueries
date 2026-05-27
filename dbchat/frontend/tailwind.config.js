@@ -5,8 +5,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        display: ['"Instrument Serif"', "ui-serif", "Georgia", "serif"],
-        sans: ['"Inter Tight"', "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["Montserrat", "Roboto", "-apple-system", "sans-serif"],
+        sans: ["Montserrat", "Roboto", "-apple-system", "sans-serif"],
         mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "monospace"],
       },
       colors: {
