@@ -23,8 +23,8 @@ import {
 } from "../lib/api.js";
 import { cn, formatNumber } from "../lib/utils.js";
 
-// Markdown components — tight spacing, themed, with code/quote/table styles
-// that match the rest of the chat panel.
+// Markdown components — minimal and clean: bold, lists, light inline code.
+// No boxy elements (blockquote / fenced code blocks render as plain prose).
 const MD_COMPONENTS = {
   p: (props) => <p className="my-1.5 leading-relaxed" {...props} />,
   strong: (props) => (
@@ -32,32 +32,31 @@ const MD_COMPONENTS = {
   ),
   em: (props) => <em className="italic text-fg/90" {...props} />,
   ul: (props) => (
-    <ul className="my-1.5 ml-4 list-disc space-y-1 marker:text-accent/70" {...props} />
+    <ul className="my-1.5 ml-5 list-disc space-y-1 marker:text-muted/70" {...props} />
   ),
   ol: (props) => (
-    <ol className="my-1.5 ml-4 list-decimal space-y-1 marker:text-accent/70" {...props} />
+    <ol className="my-1.5 ml-5 list-decimal space-y-1 marker:text-muted/70" {...props} />
   ),
   li: (props) => <li className="leading-relaxed pl-1" {...props} />,
-  h1: (props) => (
-    <h1 className="mt-3 mb-1.5 text-[15px] font-semibold tracking-tight" {...props} />
+  // Headings → just bold inline so we don't introduce visual boxes/dividers.
+  h1: (props) => <p className="my-1.5 font-semibold text-fg" {...props} />,
+  h2: (props) => <p className="my-1.5 font-semibold text-fg" {...props} />,
+  h3: (props) => <p className="my-1.5 font-semibold text-fg" {...props} />,
+  // Blockquote → plain paragraph (no border, no italic, no left padding).
+  blockquote: ({ children, ...props }) => (
+    <div className="my-1.5 leading-relaxed" {...props}>
+      {children}
+    </div>
   ),
-  h2: (props) => (
-    <h2 className="mt-3 mb-1.5 text-[14px] font-semibold tracking-tight text-fg" {...props} />
-  ),
-  h3: (props) => (
-    <h3 className="mt-2 mb-1 text-[13px] font-semibold tracking-tight text-fg/95" {...props} />
-  ),
-  blockquote: (props) => (
-    <blockquote
-      className="my-2 pl-3 border-l-2 border-accent/40 text-fg/80 italic"
-      {...props}
-    />
-  ),
-  code: ({ inline, className, children, ...props }) => {
+  // Inline code → tiny tinted token (column/table names). NOT a box.
+  // Block code → render as plain text to avoid the dark panel look the user
+  // explicitly asked to drop. The bot is instructed not to emit triple-backtick
+  // blocks in prose, but if it leaks through, we just inline it.
+  code: ({ inline, children, ...props }) => {
     if (inline) {
       return (
         <code
-          className="px-1 py-0.5 rounded bg-bg/60 border border-border/60 font-mono text-[11.5px] text-accent"
+          className="font-mono text-[12px] text-accent"
           {...props}
         >
           {children}
@@ -65,14 +64,13 @@ const MD_COMPONENTS = {
       );
     }
     return (
-      <pre className="my-2 px-3 py-2 rounded-md bg-bg/60 border border-border/60 overflow-x-auto">
-        <code className="font-mono text-[11.5px] text-fg/90 whitespace-pre-wrap break-words">
-          {children}
-        </code>
-      </pre>
+      <code className="font-mono text-[12px] text-fg/90 whitespace-pre-wrap break-words" {...props}>
+        {children}
+      </code>
     );
   },
-  hr: () => <hr className="my-3 border-border/50" />,
+  pre: ({ children }) => <>{children}</>,
+  hr: () => <span className="block my-2" />,
   a: (props) => (
     <a
       className="text-accent underline-offset-2 hover:underline"
@@ -81,20 +79,16 @@ const MD_COMPONENTS = {
       {...props}
     />
   ),
+  // Tables left simple (rarely emitted now but if they show, no border boxes).
   table: (props) => (
-    <div className="my-2 overflow-x-auto">
-      <table className="min-w-full text-[12px] border border-border/60" {...props} />
+    <div className="my-1.5 overflow-x-auto">
+      <table className="min-w-full text-[12px]" {...props} />
     </div>
   ),
   th: (props) => (
-    <th
-      className="text-left px-2 py-1 bg-surface2/60 border-b border-border/60 font-medium text-[11px] text-muted"
-      {...props}
-    />
+    <th className="text-left px-2 py-1 font-medium text-[11px] text-muted" {...props} />
   ),
-  td: (props) => (
-    <td className="px-2 py-1 border-b border-border/40 align-top" {...props} />
-  ),
+  td: (props) => <td className="px-2 py-1 align-top" {...props} />,
 };
 
 function ProseMarkdown({ text }) {

@@ -1,210 +1,419 @@
-# Lógica de Conciliación — Exitus, Niko y Vemo
+# Lógica de Conciliación — Todos los Clientes del Master Servicer
 
-> **Nota sobre selección**: Inicialmente seleccioné Liquitech, Exitus y Niko al azar, pero el módulo de Liquitech solo contiene un stub vacío (`pre_conciliation` placeholder). Lo reemplacé por **Vemo**, que tiene lógica de conciliación completa y comparable. Los 3 clientes documentados aquí son **Exitus**, **Niko** y **Vemo**.
+> **Propósito**: Este documento describe la lógica de conciliación de pagos para todos los borrowers/clientes activos en el repositorio `master-servicer-apps`. Está pensado para alimentar un chatbot que diagnostique por qué un pago específico no se concilió, qué errores ocurrieron en una corrida, y cómo resolverlos.
 
----
-
-## Tabla de contenido
-
-1. [Contexto general del proceso de conciliación](#1-contexto-general-del-proceso-de-conciliación)
-2. [Tablas y entidades principales](#2-tablas-y-entidades-principales)
-3. [Cliente: EXITUS](#3-cliente-exitus)
-4. [Cliente: NIKO](#4-cliente-niko)
-5. [Cliente: VEMO](#5-cliente-vemo)
-6. [Catálogo de errores comunes y cómo diagnosticarlos](#6-catálogo-de-errores-comunes-y-cómo-diagnosticarlos)
-7. [Árbol de decisión para diagnosticar un pago no conciliado](#7-árbol-de-decisión-para-diagnosticar-un-pago-no-conciliado)
-8. [Queries útiles para diagnóstico](#8-queries-útiles-para-diagnóstico)
+> **Fecha de generación**: 2026-05-28
+> **Repositorio**: `master-servicer-apps`
 
 ---
 
-## 1. Contexto general del proceso de conciliación
+## ⚠️ Mapeo a columnas reales del schema (LEER ANTES DE ESCRIBIR SQL)
 
-La **conciliación** es el proceso que cruza dos (o más) fuentes de datos de pagos para determinar qué pagos hacen *match* (reconciled) y cuáles no (unreconciled / REJECTED). El resultado se persiste en `payments_db`.
+Este documento describe la **lógica de negocio** y usa nombres conceptuales (e.g. `PT.owner`) que **NO siempre coinciden con los nombres reales de columnas en MySQL**. Antes de escribir cualquier query, valida en `<database_schema>` cómo se llama realmente la columna. Tabla de equivalencias conocidas:
 
-### Tipos de conciliación (enum `Type`)
+| Concepto en este .md | Columna real en MySQL |
+|---|---|
+| `PT.owner` / `pt.owner` (string con el dueño) | `payment_tape.owner_name` |
+| `PT.owner` (ID numérico) | `payment_tape.owner_id` |
+| `pt.payment_id` | `payment_tape.payment_id` (existe tal cual) |
+| `pt.gateway_payment_id` | `payment_tape.gateway_payment_id` (existe tal cual) |
+| `pt.borrower_payment_id` | `payment_tape.borrower_payment_id` (existe tal cual) |
+| `pt.extra_data.other_columns.transfer_amount` (Niko bank) | `JSON_EXTRACT(payment_tape.extra_data, '$.other_columns.transfer_amount')` |
+| `ft.provider_extra_data.aux_var_string_1` (Vemo) | `JSON_EXTRACT(funds_transfers.provider_extra_data, '$.aux_var_string_1')` |
+| Ownership API (`get_atom_owners`) | API externa — NO existe como tabla SQL; usa `payment_tape.owner_name` como proxy |
 
-| Tipo | Qué cruza | Cuándo aplica |
-|------|-----------|---------------|
-| `PAYMENTS___VS___PAYMENT_TAPE` | `payments` ↔ `payment_tape` | Gateway-mediated (Stripe, Efecty, PSE, Wompi, etc.) |
-| `PAYMENTS___VS___FUNDS_TRANSFERS` | `payments` ↔ `funds_transfers` | Validación contra el extracto bancario |
-| `DISBURSEMENTS___VS___FUNDS_TRANSFERS` | `disbursements` ↔ `funds_transfers` | Stripe (porque los payouts se hacen en batch) |
-| `PAYMENT_TAPE___VS___BANK` | `payment_tape` ↔ `funds_transfers` | Pagos sin gateway (transferencia bancaria directa) |
+**Regla dura**: si una columna mencionada en este .md no aparece literalmente en `<database_schema>`, busca el equivalente en la tabla de arriba o en columnas de nombre similar. Nunca asumas que el nombre del .md es el nombre real.
 
-### Flujo general de una `ConciliationCalculationTask`
+---
 
+## Índice
+
+1. [Marco general — ¿qué es conciliación?](#1-marco-general--qué-es-conciliación)
+2. [Tipos de conciliación (enum `Type`)](#2-tipos-de-conciliación-enum-type)
+3. [Tablas y entidades clave](#3-tablas-y-entidades-clave)
+4. [Arquitectura — Scrappy (BPM) vs Entrypoints (script)](#4-arquitectura--scrappy-bpm-vs-entrypoints-script)
+5. [Catálogo de clientes con su lógica](#5-catálogo-de-clientes-con-su-lógica)
+   - 5.1 [INKLUSIVA](#51-inklusiva)
+   - 5.2 [COOGRANCOLOMBIANA](#52-coograncolombiana)
+   - 5.3 [EQUITY_LINK](#53-equity_link)
+   - 5.4 [EXITUS](#54-exitus)
+   - 5.5 [HILCO_ARRENDAMIENTOPRODUCTIVO](#55-hilco_arrendamientoproductivo)
+   - 5.6 [NIKO](#56-niko)
+   - 5.7 [VEMO](#57-vemo)
+   - 5.8 [SOLVE / SOLVENTO](#58-solve--solvento)
+   - 5.9 [ADDI / ADDI_BNPN](#59-addi--addi_bnpn)
+   - 5.10 [WELLI](#510-welli)
+   - 5.11 [SOMOS](#511-somos)
+   - 5.12 [PAYJOY](#512-payjoy)
+   - 5.13 [SISTECREDITO](#513-sistecredito)
+   - 5.14 [CREDIORBE](#514-crediorbe)
+   - 5.15 [DELTACREDIT](#515-deltacredit)
+   - 5.16 [YUPPI](#516-yuppi)
+   - 5.17 [Clientes sin conciliación activa (BIA, CESIONBANK, FINKARGO_COLOMBIA, HAYCASH, LIQUITECH, PRESTAVALE, JTP)](#517-clientes-sin-conciliación-activa)
+6. [Catálogo de errores comunes — diagnóstico transversal](#6-catálogo-de-errores-comunes--diagnóstico-transversal)
+7. [Árbol de decisión: ¿por qué no concilió el pago X?](#7-árbol-de-decisión-por-qué-no-concilió-el-pago-x)
+8. [Queries útiles de diagnóstico](#8-queries-útiles-de-diagnóstico)
+9. [Tabla resumen comparativa de todos los clientes](#9-tabla-resumen-comparativa-de-todos-los-clientes)
+10. [Tips de implementación para el chatbot](#10-tips-de-implementación-para-el-chatbot)
+
+---
+
+## 1. Marco general — ¿qué es conciliación?
+
+La **conciliación** es el proceso que cruza dos (o más) fuentes de datos de pagos para determinar:
+
+- Qué pagos **hacen match** → marcar como `reconciled`, asignar IDs cruzados.
+- Qué pagos **no hacen match** → marcar como `REJECTED` (en `payment_tape`) o dejar pendiente, notificar revisión manual.
+
+El resultado se persiste en `payments_db` y es la base de la posterior **distribución** (envío del dinero a los inversionistas correspondientes).
+
+### Pipeline general
 ```
-1. _payment_storage.get_payments_between_approved_dates(conciliated=False, ...)
-2. _payment_tape_storage.get_unreconciled(company_id=...)
-3. _fund_transfer_storage.get_between_dates(...)            # opcional
-4. _disbursement_storage.get_disbursements_between_reports_dates(...)  # opcional (Stripe)
-5. Construir llave de conciliación (merge keys)             # ← AQUÍ FALLA LO MÁS FRECUENTE
-6. pd.merge(...) entre las fuentes
-7. Calcular flags: pt_vs_dbst_conci, check_funds_transfers, check_ownership, etc.
-8. reconciled = AND de todos los flags
-9. Si hay unreconciled → enviar Roam + raise Exception (HALT)
-10. Persistir Conciliation, link payment_tape.payment_id, marcar REJECTED
+Deudor paga → Gateway captura → VAAS registra Payment
+                                    ↓
+Banco/borrower envía archivo → file_parsing → payment_tape (PT)
+                                    ↓
+       Conciliación: cruza Payments ↔ PT ↔ Funds_Transfers ↔ Disbursements
+                                    ↓
+       Distribución: divide los reconciled entre los dueños del contrato
 ```
-
-### Estado de un Payment / Payment Tape Item
-
-| Estado | Columna `payment_tape_conciliation_id` | Significado |
-|--------|----------------------------------------|-------------|
-| Sin conciliar | `NULL` | Aún no se cruza con PT |
-| Conciliado | `<uuid>` | Tiene PT asociado |
-| REJECTED | `status = REJECTED` en `payment_tape` | PT que no encontró match |
 
 ---
 
-## 2. Tablas y entidades principales
+## 2. Tipos de conciliación (enum `Type`)
+
+| Tipo | Cruza | Cuándo aplica |
+|------|-------|---------------|
+| `PAYMENTS___VS___PAYMENT_TAPE` | `payments` ↔ `payment_tape` | Gateway-mediated (la mayoría de clientes) |
+| `PAYMENTS___VS___FUNDS_TRANSFERS` | `payments` ↔ `funds_transfers` | Validación contra extracto bancario |
+| `PAYMENTS___VS___BANK` | `payments` ↔ extracto bancario | ADDI, SOMOS, PAYJOY, SISTECREDITO, WELLI, YUPPI, DELTACREDIT, CREDIORBE |
+| `PAYMENTS___VS___BORROWER_DB` (alias `PAYMENTS___VS___DISBURSEMENTS`) | `payments` ↔ sistema interno del borrower | ADDI principalmente |
+| `DISBURSEMENTS___VS___FUNDS_TRANSFERS` | payouts agregados ↔ extracto | Stripe (Niko) |
+| `PAYMENT_TAPE___VS___BANK` | `payment_tape` ↔ `funds_transfers` (sin Payment) | Transferencia bancaria directa (Niko BBVA/ACTINVER) |
+
+### Status de una `Conciliation`
+- `PENDING`
+- `SUCCESS`
+- `INTERRUPTED` — el proceso se cortó a la mitad
+- `ERROR` — falló con excepción
+
+---
+
+## 3. Tablas y entidades clave
 
 ### `payments_db.payments`
-Pagos registrados por VAAS vía el gateway. Columnas relevantes:
+Pagos registrados por VAAS vía gateway.
 
 | Columna | Uso en conciliación |
 |---------|---------------------|
-| `id` | UUID interno — se renombra a `payments_uuid` en el código |
-| `provider_id` | ID del gateway (Stripe `pi_...`, Bancolombia, Efecty, etc.) — **llave primaria de match** |
-| `disbursement_reference_code` | Stripe `txn_...` (solo Stripe) |
-| `amount` | Monto **en centavos para Stripe**, en moneda real para otros |
-| `borrower_code` | Identificador del cliente (EXITUS, NIKO, VEMO, ...) |
-| `payment_gateway_code` | STRIPE, BBVA, ACTINVER, EFECTY, PSE, ... |
-| `status` | APPROVED, PENDING, REJECTED |
-| `approved_date` | Fecha de aprobación |
-| `payment_tape_conciliation_id` | NULL = no conciliado |
+| `id` | UUID interno (suele renombrarse a `payments_uuid` en el código) |
+| `provider_id` | ID del gateway (Stripe `pi_...`, Bancolombia, Efecty, etc.) — **llave principal** |
+| `disbursement_reference_code` | `txn_...` de Stripe |
+| `amount` | Monto (centavos en Stripe; moneda real en el resto) |
+| `borrower_code` | EXITUS, NIKO, VEMO, ADDI, ... |
+| `payment_gateway_code` | STRIPE, BBVA, ACTINVER, EFECTY, PSE, WOMPI, BANCOLOMBIA_TRANSFER, ... |
+| `status` | APPROVED / PENDING / REJECTED |
+| `approved_date` | Fecha de aprobación del gateway |
+| `payment_tape_conciliation_id` | NULL = no conciliado contra PT |
 | `fund_transfer_conciliation_id` | NULL = no conciliado contra banco |
 | `disbursement_conciliation_id` | NULL = no conciliado contra payout (Stripe) |
+| `borrower_db_conciliation_id` | NULL = no conciliado contra sistema del borrower |
+| `provider_extra_information` | JSON con `reference`, `order_id`, etc. |
 | `contract_id` | Contrato del deudor |
 
 ### `payments_db.payment_tape`
-Archivo enviado por el banco/borrower con lo que el sistema cobró. Columnas relevantes:
+Archivo del banco/borrower con lo que efectivamente recibió.
 
 | Columna | Uso |
 |---------|-----|
 | `id` | UUID interno |
-| `gateway_payment_id` | ID del gateway — se cruza contra `payments.provider_id` |
-| `gateway_code` | Pasarela del PT (STRIPE, BBVA, ACTINVER, ...) |
-| `borrower_payment_id` | Número de recibo (clave alterna usada por Vemo/Exitus/Hilco) |
-| `borrower_contract_id` | Contrato — usado para ownership check |
+| `gateway_payment_id` | Match contra `payments.provider_id` |
+| `gateway_code` | STRIPE, BBVA, EFECTY, PSE, WOMPI, BANCOLOMBIA_CORRESPONDENT, ... |
+| `borrower_payment_id` | "Número de recibo" en clientes mexicanos (Vemo / Exitus / Hilco) |
+| `borrower_contract_id` | Contrato — usado para ownership |
 | `total_payment` | Monto registrado |
+| `net_amount` | Monto neto |
 | `payment_date` | Fecha de depósito |
-| `owner` | Dueño actual del contrato según el PT |
-| `payment_id` | Se setea al ID del payment cuando se concilia |
-| `status` | RECONCILED / REJECTED / PENDING |
-| `extra_data.other_columns` | JSON adicional (incluye `transfer_amount` para Niko) |
+| `owner` | Dueño actual del contrato según el archivo |
+| `payment_id` | Se setea cuando concilia (apunta a `payments.id`) |
+| `status` | PENDING / RECONCILED / REJECTED |
+| `extra_data.other_columns` | JSON adicional (`transfer_amount`, `transfer_date`, `aux_var_2`, etc.) |
 
 ### `payments_db.funds_transfers`
-Movimientos reales en el extracto bancario:
+Movimientos reales del extracto bancario.
 
 | Columna | Uso |
 |---------|-----|
-| `id` | UUID — renombrado a `ft_uuid` |
-| `account_id` | Cuenta bancaria de destino (`bbva_mxn`, `actinver_mxn`, etc.) |
-| `date` | Fecha del movimiento bancario |
+| `id` | UUID — `ft_uuid` |
+| `account_id` | `bbva_mxn`, `actinver_mxn`, `bbva_usd`, ... |
+| `date` | Fecha del movimiento |
 | `amount` | Monto |
-| `currency` | MXN, USD |
-| `provider_extra_data.aux_var_string_1` | String auxiliar usado en llaves de Vemo |
+| `currency` | MXN / USD / COP |
+| `provider_extra_data.aux_var_string_1` | Referencia/key del FT |
+| `provider_extra_data.reference` | Reference adicional |
 
-### `payments_db.disbursements` (solo Stripe / Niko)
-Payout batches de Stripe — cada payout agrupa varias transacciones individuales.
-
-### `payments_db.disbursements_payments`
-Transacciones individuales dentro de un payout. `provider_id` se cruza con `payments.disbursement_reference_code`.
+### `payments_db.disbursements` y `disbursements_payments` (Stripe)
+- `disbursements`: payouts de Stripe (`po_...`) que agrupan múltiples transacciones individuales.
+- `disbursements_payments`: transacciones individuales (`txn_...`) dentro de cada payout. Sus amounts vienen **negativos**.
 
 ### Ownership API
-Se llama vía `self._ownership_client.get_atom_owners(contract_ids, company_id)` y retorna a quién pertenece cada contrato:
-
+```python
+self._ownership_client.get_atom_owners(contract_ids=[...], company_id=...)
+# Retorna: originator_contract_id → owner_company_id
 ```
-originator_contract_id → owner_company_id
-```
 
-`owner_company_id`:
-- `187` = Hilco (cedido desde Exitus)
-- `189`, `190`, `191` = Hilco (cedido desde Vemo, 3 maestros: 5902 / 1401 / 5926)
+| Cliente | owner_company_id → dueño |
+|---------|--------------------------|
+| EXITUS | `187` = Hilco (LENDER_EXITUSMAESTRO_HILCO) |
+| VEMO | `189` = LENDER_VEMOMAESTRO5902_HILCO, `190` = ..._1401_HILCO, `191` = ..._5926_HILCO |
+| HILCO_ARRENDAMIENTOPRODUCTIVO | `234` = LENDER_ARRENDAMIENTOPROD11957_HILCO, `235` = LENDER_ARRENDAMIENTOPROD6156_HILCO |
+| INKLUSIVA (en distribution) | Accial=`68`, Iris=`15`, Bancolombia=`72` |
 
 ---
 
-## 3. Cliente: EXITUS
+## 4. Arquitectura — Scrappy (BPM) vs Entrypoints (script)
 
-**Ruta**: `python_apps/scrappy/exitus/conciliation/conciliation_calculation/task.py`
-**Roam group ID**: `e38b3644-6c1a-4aa4-a76b-4a724dd24de4`
-**Tolerancia de unreconciled**: `0%` (cualquier item no conciliado → HALT)
+Existen **dos** arquitecturas:
 
-### Fuentes que carga
+### 4.1 Scrappy (BPM)
+Tasks que reciben input por SQS desde un workflow BPM y ejecutan `ConciliationCalculationTask.job(input)`. Aplica a:
+- INKLUSIVA, COOGRANCOLOMBIANA, EQUITY_LINK, EXITUS, HILCO_ARRENDAMIENTOPRODUCTIVO, NIKO, VEMO, SOLVE.
 
+Estructura común:
+```
+python_apps/scrappy/<client>/conciliation/conciliation_calculation/
+├── task.py          # Lógica principal
+├── model.py         # Input/Output pydantic
+├── sql_functions.py # Queries auxiliares (opcional)
+└── test.py
+```
+
+Flujo:
+```
+BPM → SQS → queue_polling/bpm_task_trigger_queue_consumer.py
+              → ScrappyManager.get_first_executable_task(input)
+                → ConciliationCalculationTask.job(input)
+```
+
+### 4.2 Entrypoints (CLI / script directo)
+Scripts que se corren manualmente o por cron. Aplica a:
+- ADDI, ADDI_BNPN, SOMOS, PAYJOY, SISTECREDITO, WELLI, YUPPI, DELTACREDIT, CREDIORBE.
+
+Estructura:
+```
+python_apps/entrypoints/conciliation/
+├── payment_vs_bank/        # Cruzar payment ↔ funds_transfers (extracto)
+├── payment_vs_payment_tape/# Cruzar payment ↔ payment_tape
+└── payment_vs_borrowers_core/ # Cruzar payment ↔ sistema interno del borrower
+```
+
+Cada `main_<borrower>.py` invoca el `EntryPoint().handle_request(Request(Borrower.X))` y delega a los conciliators de `python_apps/core/conciliation/`:
+- `payment_vs_bank/payment/conciliator.py` — implementaciones por gateway (Wompi, BancolombiaCorrespondent, DRUO, PayU, ...).
+- `payment_vs_payment_tape/conciliator.py` — implementación genérica con casos especiales por borrower.
+- `payment_vs_borrowers_core/conciliator.py` — usado por ADDI principalmente.
+
+---
+
+## 5. Catálogo de clientes con su lógica
+
+### 5.1 INKLUSIVA
+
+**Ruta**: `python_apps/scrappy/inklusiva/conciliation/conciliation_calculation/task.py`
+**País**: Colombia | **Borrower ID**: 129 | **Roam group**: `a2d0a0a7-7f0f-4b1b-b4a3-c9c88b419036`
+**Tolerancia unreconciled**: 10% por count
+**Gateways**: EFECTY, PSE, WOMPI, BANCOLOMBIA_CORRESPONDENT, BANCOLOMBIA_FUNDS_TRANSFERS
+
+#### Fuentes que carga
 | Fuente | Filtro |
 |--------|--------|
-| `unreconciled_payments` | `status=APPROVED, conciliated=False, conciliation_against=payment_tape` |
-| `PT` | `get_unreconciled(company_id=input.borrower_id)` |
-| `funds_transfer` | **No se carga** (Exitus no concilia contra extracto bancario) |
-| Ownership | `get_atom_owners(contract_ids, borrower_id)` |
+| `unreconciled_payments` | `status=APPROVED, conciliated=False, against=payment_tape` (provider_id .str.upper()) |
+| `PT` | `get_unreconciled(company_id=129)` |
+| `funds_transfer` | `against=payment_tape` |
 
-### Llave de conciliación
+#### Llaves de match por gateway
 
+| Gateway | Llave del PT | Match con |
+|---------|--------------|-----------|
+| `EFECTY` | `gateway_payment_id + "-" + transfer_date(YYYY-MM-DD) + "-" + payer_legal_id` | `payments.provider_id` |
+| `PSE` | `gateway_payment_id` | `payments.provider_id` |
+| `WOMPI` (en PT, BANCOLOMBIA_TRANSFER en payments) | `gateway_payment_id` | `payments.provider_id` |
+| `BANCOLOMBIA_CORRESPONDENT` | `YYYY-MM-DDT05:00:00+00:00 + "-" + amount_str + "-" + payer_legal_id + "-iN"` (uppercase) | `payments.provider_id` |
+| `BANCOLOMBIA_FUNDS_TRANSFERS` | Forzado `reconciled=True` (TODO pendiente) | — |
+
+#### Sufijo `-iN` (Bancolombia Correspondent)
+Maneja duplicados: si la misma `(formatted_date, amount_str, payer_legal_id)` aparece 2+ veces, la primera es `-i1`, la segunda `-i2`, etc.
+Si `borrower_contract_id == 'account_sweep'`, se hace match **tolerante**: se quita el sufijo `-iN` y se cruza por secuencia (`cumcount`).
+
+#### Checks
 ```python
-# PT.provider_id se construye eliminando el sufijo de duplicado (-N)
+reconciled        = abs(total_PT_amount_per_key - payment.amount) < 0.1
+application_check = ((capital + interes + interes_mora + garantia) - total_payment) < 1.1
+final             = reconciled AND application_check
+```
+
+#### Manejo de unreconciled
+- Si `unreconciled_count / total_pt_count > 10%` → Roam + `raise Exception` (HALT, no persiste).
+- Si está entre 0-10% → Roam con warning, continúa.
+
+#### Persistencia
+- `Conciliation(type=PAYMENTS___VS___PAYMENT_TAPE, status=SUCCESS)`
+- Linkea `payment_tape.payment_id` y `payments.payment_tape_conciliation_id`.
+
+> **Bug detectado en código actual**: la variable `conciliation_process` se usa antes de ser definida en el bloque de persistencia (línea 300). Esto en sí es un error que puede hacer fallar la corrida.
+
+---
+
+### 5.2 COOGRANCOLOMBIANA
+
+**Ruta**: `python_apps/scrappy/coograncolombiana/conciliation/conciliation_calculation/task.py`
+**País**: Colombia | **Es prácticamente copia de Inklusiva** (incluso usa `Borrower("INKLUSIVA")` para insertar la Conciliation y manda email a equipos de Inklusiva).
+**Gateways**: EFECTY, PSE, WOMPI, BANCOLOMBIA_CORRESPONDENT
+
+#### Llaves
+Iguales que Inklusiva (sección 5.1), con dos diferencias:
+- `BANCOLOMBIA_CORRESPONDENT.amount_str` se redondea a `int` (no preserva decimales).
+- No tiene path `BANCOLOMBIA_FUNDS_TRANSFERS` ni `account_sweep`.
+
+#### Checks
+```python
+reconciled = abs(total_per_key - payment.amount) < 0.1
+# Sin application_check ni ownership.
+```
+
+#### Diferencias clave vs Inklusiva
+- **No tiene HALT** por unreconciled — siempre persiste lo que pudo conciliar y manda email con los rechazados (CSV adjunto vía `send_notification_with_attachment`).
+- Persiste como `Borrower("INKLUSIVA")` (heredado del fork, no como COOGRANCOLOMBIANA).
+
+> **Bug detectado**: `unreconciled_payments` se referencia pero nunca se carga en el código actual (sólo se carga PT y funds_transfer). La task no compilaría como está.
+
+---
+
+### 5.3 EQUITY_LINK
+
+**Ruta**: `python_apps/scrappy/equity_link/conciliation/conciliation_calculation/task.py`
+**País**: México | **Borrower ID**: 222 | **Roam group**: `f8f52506-a2fd-4400-a58d-c58840fe6a77`
+**Tolerancia unreconciled**: SIN HALT — persiste todo lo que pueda y manda reporte por email.
+
+#### Fuentes
+- `unreconciled_payments` (Stripe-like: aplica prefix stripping `^sitb2` al `provider_id`).
+- `PT`.
+
+#### Llaves
+```python
+unreconciled_payments['provider_id'] = unreconciled_payments['provider_id'].str.replace(r'^sitb2', '', regex=True)
+PT_aug = pd.merge(PT, payments,
+                  left_on='gateway_payment_id', right_on='provider_id')
+```
+
+#### Checks
+```python
+pt_vs_dbst_conci      = abs(total_borrower_payment_id_amount - payment.amount) < 1
+check_funds_transfers = True   # forzado: no concilia vs banco
+check_ownership       = True   # fiso de garantías, no revisa ownership
+reconciled            = pt_vs_dbst_conci
+```
+
+#### Persistencia
+- `Conciliation(type=PAYMENTS___VS___PAYMENT_TAPE, status=SUCCESS)`.
+- Manda Excel completo (reconciled + unreconciled + unmatched payments) vía `send_xlsx_notification` a equipos de Accial / Equity Link.
+- Wraps todo en try/except: cualquier excepción → Roam + re-raise.
+
+---
+
+### 5.4 EXITUS
+
+**Ruta**: `python_apps/scrappy/exitus/conciliation/conciliation_calculation/task.py`
+**País**: México | **Borrower ID**: 165 | **Roam group**: `e38b3644-6c1a-4aa4-a76b-4a724dd24de4`
+**Tolerancia unreconciled**: 0% (cualquier fallo → HALT)
+**Gateway único**: 1 (sin diferenciar por gateway en código)
+
+#### Llaves
+```python
+# Quitar sufijo -N del provider_id
 unreconciled_payments['provider_id'] = unreconciled_payments['provider_id'].str.rsplit('-', n=1).str[0]
 
-# Cruce: PT.gateway_payment_id  ↔  payments.provider_id
-PT_aug = pd.merge(left=PT, right=unreconciled_payments,
-                  left_on='gateway_payment_id', right_on='provider_id', how='left')
-
-# Suma de monto por gateway_payment_id (un payment puede partirse en N filas de PT)
+# Match: PT.gateway_payment_id ↔ payment.provider_id
+PT_aug = pd.merge(PT, payments, left_on='gateway_payment_id', right_on='provider_id')
 PT['total_borrower_payment_id_amount'] = PT.groupby('gateway_payment_id')['total_payment'].transform('sum')
 ```
 
-### Checks que deben pasar
-
+#### Checks
 ```python
-pt_vs_dbst_conci    = abs(total_borrower_payment_id_amount - payment.amount) < 1
-check_funds_transfers = True   # forzado: Exitus no concilia contra banco
-check_ownership     = (owner_api.lower() == PT.owner.lower())
-
-reconciled = pt_vs_dbst_conci AND check_funds_transfers AND check_ownership
+pt_vs_dbst_conci      = abs(total_borrower_payment_id_amount - payment.amount) < 1
+check_funds_transfers = True  # No concilia vs banco
+check_ownership       = (owner_api.lower() == PT.owner.lower())
+reconciled            = AND de los 3
 ```
 
-### Lógica de ownership
+#### Ownership
+- Default: `owner_api = 'Exitus'`.
+- Si `owner_company_id == '187'` (Hilco): `owner_api = 'LENDER_EXITUSMAESTRO_HILCO'`.
 
-- Default: `owner_api = "Exitus"`
-- Si el contrato fue cedido a Hilco (`owner_company_id == '187'` en la API): `owner_api = "LENDER_EXITUSMAESTRO_HILCO"`
-- Match case-insensitive contra `PT.owner`.
-
-### Manejo de unreconciled
-
-Si hay **cualquier** item no conciliado:
-
+#### Manejo de unreconciled
+**HALT total** si hay cualquier item no conciliado. Mensaje a Roam con desglose:
 ```
 EXITUS conciliation: N unreconciled item(s) out of TOTAL. Manual review required.
-  - Amount mismatch (PT vs payments): X item(s), total MXN ...
-  - Amount mismatch (payments vs funds transfers): X item(s), total MXN ...
-  - Ownership mismatch: X item(s), total MXN ...
+  - Amount mismatch (PT vs payments): X item(s)
+  - Ownership mismatch: Y item(s)
 ```
-
-→ Mensaje a Roam + `raise Exception` (NO se persiste nada).
-
-### Persistencia (cuando todo pasa)
-
-```python
-Conciliation(type=PAYMENTS___VS___PAYMENT_TAPE, status=SUCCESS)
-update_payment_vs_payment_tape_conciliation_information_by_matches(company, conciliation_id, paired_list)
-batch_update_status(ids=unreconciled_pt_uuids, status='REJECTED')
-```
-
-Nota: `payment_tape.payment_id` se setea para los reconciled y `payment_tape_conciliation_id` queda con el ID nuevo.
 
 ---
 
-## 4. Cliente: NIKO
+### 5.5 HILCO_ARRENDAMIENTOPRODUCTIVO
+
+**Ruta**: `python_apps/scrappy/hilco_arrendamientoproductivo/conciliation/conciliation_calculation/task.py`
+**País**: México | **Borrower ID**: 233 | **Roam group**: `e38b3644-6c1a-4aa4-a76b-4a724dd24de4`
+**Tolerancia unreconciled**: 0% (HALT)
+**Cuenta única** (sin gateway split)
+
+#### Funcionalidad especial: blacklist diaria
+Antes de la conciliación se carga un archivo de S3:
+```
+s3://6fc5w786-clients-uploads-bucket/62da1067-e6ec-4813-94e0-9b5cb8246586/blacklists_constancias/
+```
+- Toma el archivo más reciente del día (en zona horaria America/Mexico_City).
+- Lee columna `ID Contrato`.
+- Filtra esos contratos del PT **antes** de cualquier conciliación (no entran al proceso).
+
+#### Llave
+```python
+# borrower_payment_id (Número de recibo) ↔ payment.provider_extra_information.reference
+pt_aug = pd.merge(pt, payments,
+                  left_on='borrower_payment_id',
+                  right_on='provider_extra_information.reference')
+pt['total_by_recibo'] = pt.groupby('borrower_payment_id')['total_payment'].transform('sum')
+```
+
+#### Checks
+```python
+AMOUNT_TOLERANCE = 1
+amount_match     = abs(total_by_recibo - payment.amount) < 1
+check_ownership  = (owner_api.lower() == PT.owner.lower())
+reconciled       = amount_match AND check_ownership
+```
+
+#### Ownership
+- Default: `owner_api = 'Hilco_ArrendamientoProductivo'` (ORIGINATOR_NAME).
+- Si `owner_company_id == '234'` → `LENDER_ARRENDAMIENTOPROD11957_HILCO`.
+- Si `owner_company_id == '235'` → `LENDER_ARRENDAMIENTOPROD6156_HILCO`.
+
+#### Manejo de unreconciled
+HALT total. Mensaje a Roam con desglose por reason.
+
+---
+
+### 5.6 NIKO
 
 **Ruta**: `python_apps/scrappy/niko/conciliation/conciliation_calculation/task.py`
-**Roam group ID**: `5caf710f-edd2-4d32-8650-af5b1ddf8e4d`
-**Tolerancia de unreconciled**: `10%` por **monto** (no por count) — `UNRECONCILED_TOLERANCE = 0.10`
+**País**: México | **Borrower ID**: 151 | **Roam group**: `5caf710f-edd2-4d32-8650-af5b1ddf8e4d`
+**Tolerancia unreconciled**: **10% por monto** (no por count)
+**Gateways**: STRIPE, BBVA, ACTINVER
 
-Niko es el cliente más complejo porque mezcla dos modelos:
-- **Path A: Stripe** — pagos con gateway, pero Stripe paga en batches → capa intermedia de Disbursements.
-- **Path B: Banco directo (BBVA / ACTINVER)** — no hay `Payment` registrado en VAAS porque el deudor transfiere directo al banco. Sólo existen filas en `payment_tape` y movimientos en `funds_transfers`.
+Niko mezcla dos modelos:
+- **Path A: Stripe** — gateway con capa intermedia de Disbursements (payouts).
+- **Path B: Banco directo (BBVA / ACTINVER)** — sin Payment registrado en VAAS; sólo PT y funds_transfers.
 
-### Mapa de cuentas bancarias
-
+#### Mapa de cuentas bancarias
 ```python
 BANK_ACCOUNT_IDS = {
     ('BBVA', 'MXN'):     'bbva_mxn',
@@ -216,531 +425,706 @@ BANK_ACCOUNT_IDS = {
 }
 ```
 
-### Fuentes que carga
-
-| Fuente | Para qué |
-|--------|----------|
-| `unreconciled_payments` | Solo aplica a Stripe |
-| `PT` | Todas las pasarelas (STRIPE, BBVA, ACTINVER) |
-| `funds_transfer` (`conciliation_against=disbursement`) | Para ambos paths |
-| `disbursements_payments` | Mapa txn → disbursement (solo Stripe) |
-| `disbursements` (gateway=STRIPE) | Payout batches |
-
-### Path A — STRIPE
+#### Path A — STRIPE
 
 Cadena: `PT → Payment → DisbursementPayment → Disbursement → FundTransfer`
-
-#### Llaves de cada join
 
 ```python
 # 1. PT ↔ Payment
 PT_stripe.merge(payments, left_on='gateway_payment_id', right_on='provider_id')
 
-# 2. PT ↔ DisbursementPayment
+# 2. Payment ↔ DisbursementPayment (vía txn_id)
 PT_stripe.merge(disbursements_payments,
                 left_on='disbursement_reference_code', right_on='provider_id')
 
-# 3. Disbursement ↔ FundTransfer
-# Por (account_id derivado del gateway, report_date)
-disbursements['disb_account_id'] = BANK_ACCOUNT_IDS[(gateway_code, currency)]
-disbursements.merge(funds_transfer,
-                    left_on=['disb_account_id', 'report_date_str'],
-                    right_on=['account_id', 'date_str'])
+# 3. Disbursement ↔ FundTransfer (vía account + report_date)
+disbursements['disb_account_id'] = BANK_ACCOUNT_IDS[(gateway, currency)]
+merge_on=['disb_account_id', 'report_date_str'] vs ['account_id', 'date_str']
+
+# Resolución de duplicados: tomar el FT con menor amount_diff
+disb_ft = disb_ft.sort_values('amount_diff').drop_duplicates(['disbursement_uuid'], keep='first')
 ```
 
-#### Tres checks de Stripe
+Tres checks (tolerancia < 1 MXN):
+| Check | Validación |
+|-------|------------|
+| `payments_amount_check` | `payment.amount/100 ≈ PT.total_borrower_payment_id_amount` (Stripe en centavos) |
+| `payments_disbursement_amount_check` | `disbursement_payment.gross_amount ≈ PT total` (gross_amount se recompone como `net + fee`) |
+| `check_funds_transfers` | `disbursement.total_gross_amount ≈ FT.amount` |
 
-| Check | Validación | Tolerancia |
-|-------|------------|------------|
-| `payments_amount_check` | `abs(payment.amount / 100 - PT.total_borrower_payment_id_amount) < 1` | < 1 MXN |
-| `payments_disbursement_amount_check` | `abs(disbursement_payment.gross_amount - PT.total_borrower_payment_id_amount) < 1` | < 1 MXN |
-| `check_funds_transfers` | `abs(disbursement.total_gross_amount - ft.amount) < 1` | < 1 MXN |
-
-**Nota importante**: Stripe entrega `amount` en centavos, hay que dividir entre 100. `disbursements_payments.gross_amount` se recompone vía `gross + fee` antes del check.
+#### Path B — BBVA / ACTINVER
 
 ```python
-PT_stripe['reconciled'] = (
-    payments_amount_check
-    & payments_disbursement_amount_check
-    & check_funds_transfers
-)
+# Extrae transfer_amount del JSON extra_data.other_columns
+PT_bank['transfer_amount'] = PT_bank['extra_data.other_columns'].apply(extract_transfer_amount)
+
+# Agrupa filas del PT que comparten (gateway, currency, payment_date, transfer_amount)
+# La suma del grupo debe igualar el transfer_amount.
+# Match contra un FT (account_id, currency, date_str == pay_date) con menor amount_diff < 1.
 ```
 
-#### Resolución de ambigüedad
-Si dos disbursements caen el mismo día en la misma cuenta, se toma el FT con menor `amount_diff`:
-
-```python
-disb_ft = disb_ft.sort_values('amount_diff').drop_duplicates(
-    subset=['disbursement_uuid'], keep='first'
-)
-```
-
-### Path B — Banco directo (BBVA / ACTINVER)
-
-No hay `Payment` ni `Disbursement`. Se cruza directamente PT contra el extracto.
-
-#### Llave
-
-```python
-# Las PT vienen con extra_data.other_columns en JSON:
-#   {"transfer_amount": 12345.67, ...}
-# Se agrupan filas del PT por (gateway, currency, payment_date, transfer_amount)
-# y se compara contra un FT del mismo (account_id, date, currency).
-
-group_cols = ['gateway_code', 'currency', 'payment_date', 'transfer_amount']
-for (gateway_code, currency, pay_date, transfer_amount), group_df in PT_bank.groupby(group_cols):
-
-    # Sanity: las filas del PT deben sumar el transfer_amount
-    if abs(group_df['total_payment'].sum() - transfer_amount) >= 1:
-        continue
-
-    account_id = BANK_ACCOUNT_IDS[(gateway_code, currency)]
-    ft_candidates = funds_transfer[
-        (account_id) & (currency) & (date_str == pay_date)
-    ]
-    best_match = ft_candidates.sort_values('amount_diff').iloc[0]
-
-    if best_match['amount_diff'] < 1:
-        # reconcile this group
-```
-
-### Tolerancia de unreconciled (por monto)
-
+#### Tolerancia (por monto)
 ```python
 unreconciled_ratio = total_unreconciled_amount / total_amount
-
-if unreconciled_ratio >= 0.10:    # 10%
-    msg = "NIKO conciliation: ... FAILING — exceeds 10% tolerance"
-    send_roam_message(msg, ROAM_GROUP_ID)
-    raise Exception(msg)
+if unreconciled_ratio >= 0.10:
+    raise Exception(...)  # HALT
 else:
-    msg = "NIKO conciliation: ... Within 10% tolerance — proceeding."
-    send_roam_message(msg, ROAM_GROUP_ID)
-    # continúa
+    proceed
 ```
 
-### Tipos de Conciliation persistidos
-
+#### Tipos persistidos
 | Camino | Conciliation Type |
 |--------|-------------------|
 | Stripe matched | `DISBURSEMENTS___VS___FUNDS_TRANSFERS` + `PAYMENTS___VS___PAYMENT_TAPE` |
 | Bank matched | `PAYMENT_TAPE___VS___BANK` |
-| No matched | `payment_tape.status = REJECTED` |
 
 ---
 
-## 5. Cliente: VEMO
+### 5.7 VEMO
 
 **Ruta**: `python_apps/scrappy/vemo/conciliation/conciliation_calculation/task.py`
-**Roam group ID**: `e38b3644-6c1a-4aa4-a76b-4a724dd24de4`
-**Tolerancia de unreconciled**: `0%` (cualquier item no conciliado → HALT)
+**País**: México | **Borrower ID**: 160 | **Roam group**: `e38b3644-6c1a-4aa4-a76b-4a724dd24de4`
+**Tolerancia unreconciled**: 0% (HALT)
 
-Vemo es similar a Exitus pero **sí concilia contra extracto bancario** (`funds_transfers`) y usa una llave distinta basada en `borrower_payment_id` (Número de Recibo).
+Vemo sí concilia contra extracto bancario y usa `borrower_payment_id` (Número de Recibo) como llave.
 
-### Fuentes que carga
-
-| Fuente | Filtro |
-|--------|--------|
-| `unreconciled_payments` | `status=APPROVED, conciliated=False, conciliation_against=payment_tape` |
-| `PT` | `get_unreconciled(company_id=input.borrower_id)` |
-| `funds_transfer` | `filter_conciliated=False, conciliation_against=payment` |
-| Ownership | `get_atom_owners(contract_ids, borrower_id)` |
-
-### Llave de conciliación
-
-#### 1) PT ↔ Payments
-
+#### Llaves
 ```python
-PT['total_borrower_payment_id_amount'] = PT.groupby('borrower_payment_id')['total_payment'].transform('sum')
+# 1) PT ↔ Payments
+PT.groupby('borrower_payment_id')['total_payment'].transform('sum')
+merge(PT, payments,
+      left_on='borrower_payment_id',
+      right_on='provider_extra_information.reference')
 
-# Join: PT.borrower_payment_id ↔ payment.provider_extra_information.reference
-PT_aug = pd.merge(PT, unreconciled_payments,
-                  left_on='borrower_payment_id',
-                  right_on='provider_extra_information.reference',
-                  how='left')
+# 2) PT ↔ Funds Transfers
+funds_transfer['aux_var_string_1'].str.replace(r'^\d{4}-\d{2}-\d{2}-', '', regex=True)
+funds_transfer['merge_key'] = date(YYYY-MM-DD) + "-" + aux_var_string_1
+merge(PT, funds_transfer,
+      left_on='borrower_payment_id', right_on='merge_key')
 ```
 
-#### 2) PT ↔ Funds Transfers (extracto)
-
-```python
-# Limpia prefijos de fecha en aux_var_string_1 del FT
-funds_transfer['provider_extra_data.aux_var_string_1'] = (
-    funds_transfer['provider_extra_data.aux_var_string_1']
-        .str.replace(r'^\d{4}-\d{2}-\d{2}-', '', regex=True)
-)
-
-# Llave de FT: YYYY-MM-DD + "-" + aux_var_string_1
-funds_transfer['merge_key'] = (
-    pd.to_datetime(funds_transfer['date']).dt.strftime('%Y-%m-%d')
-    + '-' + funds_transfer['provider_extra_data.aux_var_string_1']
-)
-
-# Cruce con PT por borrower_payment_id == merge_key
-PT_aug = pd.merge(PT_aug, funds_transfer,
-                  left_on='borrower_payment_id',
-                  right_on='merge_key', how='left')
-```
-
-### Checks que deben pasar
-
+#### Checks
 ```python
 pt_vs_dbst_conci      = abs(total_borrower_payment_id_amount - payment.amount) < 1
-check_funds_transfers = abs(PT.amount - FT.amount) < 1   # y FT.amount no nulo
-check_ownership       = (owner_api == PT.owner)   # case-insensitive
-
-reconciled = pt_vs_dbst_conci AND check_funds_transfers AND check_ownership
+check_funds_transfers = abs(PT.amount - FT.amount) < 1 AND FT.amount IS NOT NULL
+check_ownership       = (owner_api.lower() == PT.owner.lower())
+reconciled = AND de los 3
 ```
 
-### Lógica de ownership (3 maestros distintos)
+#### Ownership (3 maestros de Hilco)
+- Default: `owner_api = 'Vemo'`
+- `189` → `LENDER_VEMOMAESTRO5902_HILCO`
+- `190` → `LENDER_VEMOMAESTRO1401_HILCO`
+- `191` → `LENDER_VEMOMAESTRO5926_HILCO`
 
-```python
-owner_api = 'Vemo'  # default
-# Si el contrato fue cedido a Hilco a través de uno de los 3 maestros:
-# owner_company_id 189 → LENDER_VEMOMAESTRO5902_HILCO
-# owner_company_id 190 → LENDER_VEMOMAESTRO1401_HILCO
-# owner_company_id 191 → LENDER_VEMOMAESTRO5926_HILCO
-```
-
-### Persistencia
-
-```python
-Conciliation(type=PAYMENTS___VS___FUNDS_TRANSFERS, status=SUCCESS)
-Conciliation(type=PAYMENTS___VS___PAYMENT_TAPE,    status=SUCCESS)
-# Linkea: payment ↔ ft, y payment ↔ pt
-batch_update_status(ids=unreconciled_pt_uuids, status='REJECTED')
-```
+#### Persistencia
+- `Conciliation(type=PAYMENTS___VS___FUNDS_TRANSFERS, status=SUCCESS)`
+- `Conciliation(type=PAYMENTS___VS___PAYMENT_TAPE, status=SUCCESS)`
+- Linkea payment ↔ ft y payment ↔ pt.
 
 ---
 
-## 6. Catálogo de errores comunes y cómo diagnosticarlos
+### 5.8 SOLVE / SOLVENTO
 
-Esta sección es la más útil para tu chatbot: cuando el usuario pregunte *"¿por qué no concilió el pago X?"*, hay que recorrer este catálogo en orden y devolver la primera causa probable.
+**Ruta**: `python_apps/scrappy/solve/conciliation/conciliation_calculation/task.py`
+**Es la implementación más simple**: lee CSVs (no usa storages).
+
+#### Lógica
+```python
+payment_tape = pd.read_csv(config["payment_tape_path"], sep=";")
+extracto     = pd.read_csv(config["extracto_path"], sep=";")
+
+# Group PT por transfer_id, sumar amounts
+pt_grouped = payment_tape.groupby("transfer_id").agg(pt_total_amount=("payment_amount", "sum"))
+
+# Merge: transfer_id == payment_reference
+merged = pd.merge(pt_grouped, extracto,
+                  left_on="transfer_id", right_on="payment_reference")
+merged["reconciled"] = abs(merged["pt_total_amount"] - merged["payment_amount"]) < 0.1
+```
+
+#### Características
+- Tolerancia: < 0.1
+- Sin HALT. Sólo loguea unreconciled.
+- No persiste en DB (es ad-hoc).
+- Output: `reconciled_count` y `unreconciled_count`.
+
+---
+
+### 5.9 ADDI / ADDI_BNPN
+
+**Ruta**: `python_apps/entrypoints/conciliation/{payment_vs_bank,payment_vs_payment_tape,payment_vs_borrowers_core}/main_addi.py`
+**País**: Colombia | **Borrower ID**: 1 (ADDI), 154 (ADDI_BNPN)
+**Notifier**: Slack canal `NOTIFIER___SLACK___ADDI___CHANNEL`
+**Tipo**: PAYMENTS___VS___BANK + PAYMENTS___VS___BORROWER_DB + PAYMENTS___VS___PAYMENT_TAPE
+
+#### Gateways
+- ADDI: `BANCOLOMBIA_CORRESPONDENT`, `DRUO`, `NEQUI`, `BANCOLOMBIA_COLLECT`, `PSE`.
+- ADDI_BNPN: `PSE`.
+
+#### Lógica (payment_vs_bank)
+Usa `core/conciliation/payment_vs_bank/payment/conciliator.py` con implementaciones por gateway:
+- `BancolombiaCorrespondent` — no tiene disbursement, sólo se concilia contra funds_transfers directamente.
+- `Wompi` (NEQUI / BANCOLOMBIA_COLLECT / PSE) — match por `disbursement_reference_code` dentro de un payout en una ventana de ±30 días.
+- `DRUO`, `PayU` — implementaciones específicas.
+
+#### Match contra FT
+```python
+# Por defecto:
+abs(payment.amount - fund_transfer.amount) <= Decimal('1')   # mismo día (delta 0)
+
+# CREDIORBE override:
+_match_amount_and_reference: amount Y (reference vacía OR reference iguala)
+```
+
+#### Lógica (payment_vs_borrowers_core)
+- ADDI tiene su propio borrower_db con la tabla de pagos del lado del cliente.
+- Cruza `payments_db.payments` contra el sistema interno → `PAYMENTS___VS___BORROWER_DB`.
+- Persiste como `Type.PAYMENTS___VS___DISBURSEMENTS` (alias histórico).
+
+#### addi_month_payments
+Variante mensual en `entrypoints/conciliation/payment_vs_borrowers_core/addi_month_payments/` — corre conciliación de un mes entero.
+
+---
+
+### 5.10 WELLI
+
+**Ruta**: `python_apps/entrypoints/conciliation/payment_vs_payment_tape/main_welli.py`
+**País**: Colombia | **Borrower ID**: 33
+
+Welli es un caso especial en `PaymentVsPaymentTapeConciliator.conciliate()`:
+
+```python
+if self.borrower == Borrower.WELLI:
+    self._conciliate_wompi_payments(...)
+    self._conciliate_correspondent_payments(...)
+else:
+    # Default: SQL stored procedure
+    self.conciliations_storage.conciliate_payment_vs_payment_tape(...)
+```
+
+#### Lógica Wompi (Welli)
+Para cada gateway en `WOMPI.get_supported_gateways()`:
+- Carga payments (filtra por `gateway`, `status=APPROVED`).
+- Carga PT (mismo gateway, no conciliados).
+- Match con predicate:
+  - **Welli + PSE**: `payment.provider_id == pt.gateway_payment_id` AND mismo gateway.
+  - **Resto**: `payment.order_id == pt.gateway_payment_id` AND mismo gateway.
+- Una `payment` puede aplicar a múltiples PT items (un cobro a varias cuotas).
+
+#### Lógica BANCOLOMBIA_CORRESPONDENT (Welli)
+Match con predicate:
+```python
+amount == total_payment AND approved_date.date() == payment_date.date() AND gateway == gateway
+```
+Una sola correspondencia 1-a-1 (rompe en el primer match).
+
+#### Gateways
+`BANCOLOMBIA_CORRESPONDENT`, `PSE`, `BANCOLOMBIA_TRANSFER`, `DAVIPLATA`, `NEQUI`.
+
+---
+
+### 5.11 SOMOS
+
+**Ruta**: `python_apps/entrypoints/conciliation/{payment_vs_bank,payment_vs_payment_tape}/main_somos.py`
+**País**: Colombia | **Borrower ID**: 32
+**Mensaje de éxito**: `"Payments conciliation vs Invoice Report was made successfully."` (sí, "Invoice Report" no "Payment Tape")
+
+#### Gateways
+`PAYU`, `BANCOLOMBIA_COLLECT`, `BANCOLOMBIA_TRANSFER`, `NEQUI`, `PSE`, `CARD`, `DAVIPLATA`, `BANCOLOMBIA_QR`.
+
+Cuando `gateway == WOMPI`, se expande a: NEQUI, PSE, BANCOLOMBIA_COLLECT, BANCOLOMBIA_TRANSFER, CARD, DAVIPLATA, BANCOLOMBIA_QR.
+
+#### Lógica
+- Usa la conciliación genérica del SP (no la lógica especial de Welli).
+- `payment_vs_bank` con disbursements para WOMPI y PAYU.
+
+---
+
+### 5.12 PAYJOY
+
+**Ruta**: `python_apps/entrypoints/conciliation/{payment_vs_bank,payment_vs_payment_tape}/main_payjoy.py`
+**País**: Colombia | **Borrower ID**: 5
+
+#### Gateways
+`BANCOLOMBIA_CORRESPONDENT`, `EFECTY`, `NEQUI`, `PSE`, `BANCOLOMBIA_COLLECT`, `BANCOLOMBIA_TRANSFER`, `DAVIPLATA`, `REFACIL`, `MOVII`, `WOMPI`.
+
+Cuando `gateway == WOMPI`: NEQUI, PSE, BANCOLOMBIA_COLLECT, BANCOLOMBIA_TRANSFER, DAVIPLATA.
+
+#### Lógica
+- Genérica (SP) para PT.
+- `payment_vs_bank` para EFECTY, WOMPI, REFACIL, MOVII (todos con disbursements).
+
+---
+
+### 5.13 SISTECREDITO
+
+**Ruta**: `python_apps/entrypoints/conciliation/{payment_vs_bank,payment_vs_payment_tape}/main_sistecredito.py`
+**País**: Colombia | **Borrower ID**: 86
+
+#### Gateways
+`EFECTY`, `GANA`. Ambos tienen disbursements.
+
+#### Lógica
+Genérica, sin overrides especiales.
+
+---
+
+### 5.14 CREDIORBE
+
+**Ruta**: `python_apps/entrypoints/conciliation/payment_vs_bank/main_crediorbe.py`
+**País**: Colombia | **Borrower ID**: 31
+
+#### Gateways
+`BANCOLOMBIA`, `DAVIVIENDA`, `BANCO_BOGOTA`, `PSE` (PSE con disbursements).
+
+#### Lógica especial
+- En `payment_vs_bank`: usa `_match_amount_and_reference` (no solo amount). Match si amount cuadra AND (reference vacía OR iguala).
+- En `payment_vs_payment_tape`: usa `_last_three_months` (no `_last_month`) para el `from_date`.
+
+---
+
+### 5.15 DELTACREDIT
+
+**Ruta**: `python_apps/entrypoints/conciliation/payment_vs_bank/main_deltacredit.py`
+**País**: Colombia | **Borrower ID**: 71
+
+#### Gateways
+`BANCOLOMBIA`, `BANCOLOMBIA_CORRESPONDENT`, `NEQUI`, `PSE`, `BANCOLOMBIA_COLLECT`, `BANCOLOMBIA_TRANSFER_2`, `DAVIPLATA`, `WOMPI`.
+
+Cuando `gateway == WOMPI`: NEQUI, PSE, BANCOLOMBIA_COLLECT, BANCOLOMBIA_TRANSFER_2, DAVIPLATA.
+
+#### Lógica
+Genérica. WOMPI con disbursements.
+
+---
+
+### 5.16 YUPPI
+
+**Ruta**: `python_apps/entrypoints/conciliation/payment_vs_bank/main_yuppi.py`
+**País**: (Colombia/Argentina según contexto, no especificado en model.py)
+
+#### Gateways
+`DRUO`, `BANCOLOMBIA_COLLECT`, `NEQUI`.
+
+#### Lógica
+Genérica. Sólo tiene `payment_vs_bank`.
+
+---
+
+### 5.17 Clientes sin conciliación activa
+
+Los siguientes borrowers existen en el enum `Borrower` pero **no tienen código de conciliación** en el repositorio actual:
+
+| Cliente | Estado | Notas |
+|---------|--------|-------|
+| BIA | Solo distribution | No tiene módulo de conciliación |
+| CESIONBANK | Solo distribution | No tiene módulo de conciliación |
+| FINKARGO_COLOMBIA | Solo distribution | Borrower ID 232. No tiene módulo de conciliación (sólo distribución) |
+| HAYCASH | Solo distribution | — |
+| LIQUITECH | Stub | Existe `liquitech/conciliation/pre_conciliation/task.py` pero solo es placeholder (`# Do things!`) — no implementado |
+| PRESTAVALE | Vacío | Sólo tiene `__pycache__` |
+| JTP | Sólo en enum | Gateway: EFECTY |
+| WIMO | Sólo en enum | — |
+| SOLVENTO | Igual que SOLVE | Misma lógica |
+| BORROWER_COL_DEMO | Demo | — |
+
+> Cuando el usuario pregunte por estos clientes, responder: "No existe lógica de conciliación implementada actualmente para este cliente; sólo distribución/scraping."
+
+---
+
+## 6. Catálogo de errores comunes — diagnóstico transversal
+
+Cuando el usuario pregunte *"¿por qué no concilió el pago X?"*, recorrer este catálogo en orden.
 
 ### 6.1. No existe el `Payment` en `payments_db.payments`
 
-**Síntoma**: El usuario pregunta por un PT que no tiene `payment_id`.
+**Síntoma**: El usuario consulta un PT que no tiene `payment_id` y no hay payment con el `provider_id` esperado.
 
-**Causa**: VAAS nunca registró el pago en el gateway. Posibles motivos:
-- El gateway no notificó (webhook perdido).
-- Pago hecho por transferencia bancaria directa (caso normal en Niko BBVA/ACTINVER — no aplica como error).
-- `borrower_code` o `payment_gateway_code` mal asignados.
+**Causa**:
+- Webhook del gateway perdido / no procesado.
+- Pago bancario directo sin gateway (caso normal en Niko BBVA/ACTINVER — no es error).
+- `borrower_code` mal asignado en el payment.
 
-**Cómo detectarlo**:
+**Detectar**:
 ```sql
-SELECT * FROM payment_tape WHERE id = '<pt_id>' AND payment_id IS NULL;
+SELECT * FROM payment_tape WHERE id = '<pt_id>';
 SELECT * FROM payments WHERE provider_id = '<gateway_payment_id_del_pt>';
--- Si la 2da query no retorna nada → el payment no existe
 ```
 
-**Solución**: Investigar el gateway (Stripe dashboard, Bancolombia portal, etc.). Si el pago existe pero VAAS no lo capturó, hay que ingestarlo manualmente o re-disparar el webhook.
+**Solución**: investigar el gateway. Si el pago existe, re-disparar el webhook o ingestar manualmente.
 
 ---
 
 ### 6.2. Existe el `Payment` pero no la fila en `payment_tape`
 
-**Síntoma**: El payment tiene `payment_tape_conciliation_id = NULL` y no hay PT que lo referencie.
+**Síntoma**: `payments.payment_tape_conciliation_id IS NULL` y no hay PT con el `gateway_payment_id`.
 
-**Causa**: El banco/borrower no envió el archivo o el `file_parsing` falló al insertarlo.
+**Causa**: el banco/borrower no envió el archivo, o `file_parsing` falló.
 
-**Cómo detectarlo**:
+**Detectar**:
 ```sql
-SELECT * FROM payments WHERE id = '<payment_id>' AND payment_tape_conciliation_id IS NULL;
 SELECT * FROM payment_tape WHERE gateway_payment_id = '<payment.provider_id>';
--- Si la 2da query no retorna nada → el PT no se ingestó
 ```
 
-**Solución (Inklusiva)**: Hay un proceso de **barrido** (`PtByVaasTask`) que sintetiza una fila de PT a partir del payment para forzar la conciliación. Aplica si el payment es >3 meses viejo. No aplica directo a Exitus / Niko / Vemo — habría que cargar manualmente el PT.
+**Solución**:
+- **INKLUSIVA**: hay un `PtByVaasTask` (barrido) que sintetiza una PT a partir del payment si tiene >3 meses sin conciliar. Sólo aplica a `BANCOLOMBIA_CORRESPONDENT` y `EFECTY`.
+- Otros clientes: cargar manualmente el PT.
 
 ---
 
-### 6.3. Llave (`provider_id` / `gateway_payment_id`) no hace match
+### 6.3. Llave malformada (no hay match en merge)
 
-**Síntoma**: Existen ambos (Payment y PT) pero el `merge` deja la fila sin pareja (NaN del lado del Payment).
+**Síntoma**: ambos existen pero el `merge` deja la fila sin pareja (NaN del lado del payment).
 
-**Causa**:
-- Sufijos de duplicado (`-1`, `-2`) no removidos. Exitus hace `str.rsplit('-', n=1).str[0]`; Niko no.
-- Espacios en blanco, ceros a la izquierda perdidos por casting numérico.
-- En Vemo la llave usa `borrower_payment_id` (no `gateway_payment_id`). Si el PT trae mal el Número de Recibo → no hay match.
-- En Niko Stripe la llave es `provider_id` (PaymentIntent `pi_...`). Si el PT trae el `txn_...` por error → no hay match.
+**Causas frecuentes por cliente**:
 
-**Cómo detectarlo**:
+| Cliente | Causa típica |
+|---------|--------------|
+| EXITUS | Sufijos `-N` no removidos del `provider_id` (la task ya los limpia con `rsplit('-', n=1)`) |
+| EQUITY_LINK | Prefijo `sitb2` no removido (la task lo hace) |
+| INKLUSIVA / COOGRANCOLOMBIANA / Bancolombia | Llave compuesta mal construida: `YYYY-MM-DDT05:00:00+00:00-amount-payer_id-iN` debe ser uppercase, el sufijo `-iN` debe coincidir; en Inklusiva la `amount_str` preserva decimales (`466434.56`), en Coograncolombiana se redondea a entero |
+| INKLUSIVA / EFECTY | `transfer_date` mal parseado: debe ser YYYY-MM-DD en UTC |
+| VEMO / HILCO | `borrower_payment_id` (Número de recibo) no coincide con `payment.provider_extra_information.reference` |
+| NIKO / STRIPE | PT usa `provider_id` (`pi_...`) y no `txn_...` |
+
+**Detectar**:
 ```sql
-SELECT pt.id, pt.gateway_payment_id, p.provider_id
+SELECT pt.id, pt.gateway_payment_id, p.provider_id, p.id AS payment_id
 FROM payment_tape pt
 LEFT JOIN payments p ON pt.gateway_payment_id = p.provider_id
 WHERE pt.id = '<pt_id>';
 ```
 
-Buscar diferencias char-by-char (longitud, mayúsculas, sufijos numéricos).
-
-**Solución**: Corregir el PT o el payment según corresponda. A veces requiere parche en la lógica de `file_parsing`.
+Buscar diferencias char-by-char (espacios, mayúsculas/minúsculas, sufijos numéricos).
 
 ---
 
-### 6.4. Monto no cuadra (`pt_vs_dbst_conci = False`)
+### 6.4. Monto no cuadra (`reconciled = False` por amount)
 
-**Síntoma**: Match en llave pero `total_borrower_payment_id_amount` ≠ `payment.amount`.
+**Síntoma**: hay match en la llave pero la suma del PT ≠ payment.amount.
 
-**Causas frecuentes**:
-- **Stripe**: olvidaron dividir `payment.amount / 100` (Stripe maneja centavos). En Niko esto está explícito; si se desactivara, fallaría todo Stripe.
-- **Comisiones**: el PT trae el bruto, el payment el neto (o viceversa).
-- **Pagos parciales**: un PaymentIntent cubre 3 cuotas → 3 filas de PT. Si solo se cargó 1 → el sum no llega al total. Por eso se usa `.groupby(...).transform('sum')`.
+**Causas típicas**:
+- **Stripe (Niko)**: olvidaron dividir `amount/100`. Stripe entrega en centavos.
+- **Comisiones**: PT trae bruto y payment trae neto (o viceversa).
+- **Pagos parciales**: un PaymentIntent cubre N cuotas → N filas de PT. Si solo se cargó M < N → la suma no llega. La task usa `groupby(...).transform('sum')` para evitarlo, pero si las llaves no son las mismas no agrupa.
 - **Conversión de moneda**: PT en MXN, payment en USD sin conversión.
+- **Inklusiva — `application_check`**: la **suma** está bien (`reconciled = True`) pero el desglose interno no (`capital + interes + mora + cargos ≠ total_aplicado` con tolerancia 1.1). El item queda como REJECTED.
 
-**Cómo detectarlo**:
+**Tolerancias**:
+| Cliente | Tolerancia amount |
+|---------|-------------------|
+| INKLUSIVA, COOGRANCOLOMBIANA | < 0.1 |
+| EXITUS, VEMO, EQUITY_LINK, HILCO_ARRENDAMIENTOPRODUCTIVO, NIKO | < 1 |
+| SOLVE | < 0.1 |
+| Genérica (ADDI, etc.) | <= 1 (Decimal) |
+
+**Detectar**:
 ```sql
-SELECT pt.gateway_payment_id, SUM(pt.total_payment) AS sum_pt, p.amount AS payment_amount
+SELECT pt.gateway_payment_id, SUM(pt.total_payment), p.amount
 FROM payment_tape pt
 JOIN payments p ON pt.gateway_payment_id = p.provider_id
 WHERE pt.gateway_payment_id = '<X>'
 GROUP BY pt.gateway_payment_id, p.amount;
 ```
 
-Diferencia > tolerancia (Exitus/Vemo: 1; Niko: 1 MXN) → falla este check.
-
-**Solución**: Cargar las filas faltantes del PT, corregir montos, o ajustar tolerancia si la diferencia es por redondeo.
-
 ---
 
 ### 6.5. Ownership mismatch (`check_ownership = False`)
 
-**Síntoma**: PT existe, montos cuadran, pero `owner_api` (lo que dice la Ownership API) no coincide con `PT.owner` (lo que dice el archivo del borrower).
+Aplica a: **EXITUS, VEMO, HILCO_ARRENDAMIENTOPRODUCTIVO**.
 
-**Causa**:
-- El contrato fue cedido a Hilco pero el archivo del borrower aún registra al originador como dueño.
-- O al revés: el archivo dice "cedido" pero la API aún no fue actualizada.
+**Síntoma**: el PT existe, los montos cuadran, pero `owner_api` (lo que dice la Ownership API) ≠ `PT.owner` (lo que dice el archivo del borrower).
 
-**Lógica esperada por cliente**:
-
-| Cliente | Dueño default | Si está cedido a Hilco |
-|---------|---------------|------------------------|
-| Exitus | `Exitus` | `LENDER_EXITUSMAESTRO_HILCO` (owner_company_id `187`) |
-| Vemo | `Vemo` | `LENDER_VEMOMAESTRO5902_HILCO` (`189`), `..._1401_HILCO` (`190`), `..._5926_HILCO` (`191`) |
-| Niko | N/A | Niko no hace check de ownership |
-
-**Cómo detectarlo**:
+**Detectar**:
 ```python
-# A través de la API
-ownership = self._ownership_client.get_atom_owners(contract_ids=[<contract>], company_id=...)
-# vs. el campo PT.owner
+ownership = ownership_client.get_atom_owners(contract_ids=[<contract>], company_id=<id>)
+# Comparar contra PT.owner
 ```
 
+**Lógica esperada**:
+| Cliente | Dueño default | Si está cedido |
+|---------|---------------|----------------|
+| EXITUS | `Exitus` | `LENDER_EXITUSMAESTRO_HILCO` (`187`) |
+| VEMO | `Vemo` | `5902/1401/5926`_HILCO (`189/190/191`) |
+| HILCO_ARRENDAMIENTOPRODUCTIVO | `Hilco_ArrendamientoProductivo` | `LENDER_ARRENDAMIENTOPROD11957_HILCO` (`234`), `LENDER_ARRENDAMIENTOPROD6156_HILCO` (`235`) |
+
 **Solución**:
-1. Verificar en la API quién es el dueño actual.
-2. Si la API está correcta y el PT trae el dueño viejo → corregir el archivo de PT.
-3. Si el archivo es correcto pero la API no se actualizó → forzar refresh de la cesión.
+- Si la API está correcta y el PT trae el dueño viejo → corregir el archivo de PT.
+- Si la API no se actualizó → forzar refresh de la cesión.
 
 ---
 
-### 6.6. `check_funds_transfers = False` — no hay movimiento bancario que coincida
+### 6.6. `check_funds_transfers = False` (no hay extracto que coincida)
 
-**Síntoma**: Match en PT y Payment, pero el extracto no muestra el ingreso.
+Aplica a: **VEMO, NIKO**. (En EXITUS/EQUITY_LINK/HILCO está forzado a `True`.)
 
-**Por cliente**:
-- **Exitus**: hard-coded a `True` (Exitus no concilia contra banco). **No puede fallar.**
-- **Niko / Stripe**: falta el FT para el `report_date` y `account_id` del disbursement.
-- **Niko / Banco**: falta el FT del `(account_id, date, currency, amount ≈ transfer_amount)`.
-- **Vemo**: la llave compuesta `date + aux_var_string_1` no encontró match en el FT, o el monto difiere.
+**Síntomas y causas**:
+- **VEMO**: la llave `YYYY-MM-DD-aux_var_string_1` no encuentra match en `funds_transfers`. Posibles: regex de limpieza falló, formato de fecha distinto, `aux_var_string_1` con caracteres no esperados.
+- **NIKO / Stripe**: no hay FT para el `(account_id derivado del gateway, report_date)`. Posible: la cuenta `BANK_ACCOUNT_IDS` mal mapeada, Stripe pagó en otra fecha (timezone).
+- **NIKO / Banco**: no hay FT para `(account_id, date_str == payment_date, currency)` con `amount ≈ transfer_amount` (tolerancia 1).
 
-**Cómo detectarlo**:
+**Detectar**:
 ```sql
 -- Vemo
 SELECT * FROM funds_transfers
 WHERE date = '<payment_date>'
   AND provider_extra_data->>'aux_var_string_1' LIKE '%<borrower_payment_id>%';
 
--- Niko (banco)
+-- Niko (banco directo)
 SELECT * FROM funds_transfers
 WHERE account_id = '<bbva_mxn|actinver_mxn|...>'
   AND date = '<pay_date>'
   AND currency = '<MXN|USD>'
-  AND abs(amount - <transfer_amount>) < 1;
+  AND ABS(amount - <transfer_amount>) < 1;
 ```
-
-**Solución**:
-- El banco aún no envió el extracto → esperar.
-- El FT existe pero la llave está mal construida → debuggear la regex / formato de `aux_var_string_1`.
-- Múltiples FT del mismo día y monto → el código elige el de menor `amount_diff`; revisar si eligió uno equivocado.
 
 ---
 
-### 6.7. `check_funds_transfers = False` por ambigüedad (varios FT en el mismo día/cuenta)
+### 6.7. Ambigüedad (varios FT en el mismo día/cuenta)
 
-**Síntoma**: Match aparente pero el `drop_duplicates(keep='first')` después de `sort_values('amount_diff')` eligió el FT equivocado.
+**Síntoma**: el `drop_duplicates(keep='first')` después de `sort_values('amount_diff')` puede haber elegido el FT incorrecto.
 
-**Cómo detectarlo**:
+**Aplicación**: NIKO usa esto para resolver duplicados en Stripe (disbursement → FT) y en BBVA/ACTINVER (PT group → FT).
+
+**Detectar**:
 ```sql
 SELECT COUNT(*) FROM funds_transfers
 WHERE date = '<X>' AND account_id = '<Y>';
 -- > 1 = ambigüedad
 ```
 
-**Solución**:
-- Añadir más criterios a la llave (referencia bancaria, descriptor).
-- Limpiar duplicados en el FT antes de la conciliación.
+**Solución**: añadir más criterios a la llave o limpiar duplicados en FT.
 
 ---
 
-### 6.8. Falla la conciliación del payout completo (Niko / Stripe)
+### 6.8. Stripe `amount` no se dividió por 100
 
-**Síntoma**: Todos los Stripe payments del mismo `disbursement_id` fallan `check_funds_transfers`.
+Aplica a: **NIKO / STRIPE** únicamente.
 
-**Causa**: El disbursement de Stripe (`po_...`) no encuentra su FT correspondiente. Posibles:
+**Síntoma**: `payments_amount_check` siempre falla con diferencias de 2 órdenes de magnitud (~99x).
+
+**Diagnóstico**:
+```python
+abs(payment.amount / 100 - PT.total_borrower_payment_id_amount)
+# Si la diferencia ≈ amount * 0.99 → falta /100
+```
+
+---
+
+### 6.9. Disbursement de Stripe no encuentra FT (Niko)
+
+**Síntoma**: todos los Stripe payments del mismo `disbursement_id` fallan `check_funds_transfers`.
+
+**Causas**:
 - Cuenta bancaria mal mapeada en `BANK_ACCOUNT_IDS`.
-- Stripe pagó en una fecha distinta a `report_date` (timezones).
-- El FT fue marcado como `conciliated=True` en otro proceso → no entró al filtro.
+- Stripe pagó en una fecha distinta a `report_date` (timezone).
+- El FT fue marcado `conciliated=True` por otro proceso → quedó fuera del filtro `filter_conciliated=False`.
 
-**Cómo detectarlo**:
+**Detectar**:
 ```sql
 SELECT d.id, d.report_date, d.total_gross_amount, d.payment_gateway_code, d.currency
-FROM disbursements d
-WHERE d.id = '<disbursement_uuid>';
+FROM disbursements d WHERE d.id = '<disbursement_uuid>';
 
 SELECT * FROM funds_transfers
-WHERE account_id = '<expected_account_id>'
+WHERE account_id = '<expected>'
   AND date BETWEEN '<report_date>' - 1 AND '<report_date>' + 1
   AND currency = '<X>';
 ```
 
 ---
 
-### 6.9. La task levanta `Exception` y no persiste nada (Exitus / Vemo)
+### 6.10. HALT por tolerancia 0% (Exitus / Vemo / Hilco)
 
-**Síntoma**: La task corre, manda mensaje a Roam, y no hay nuevo registro en `conciliations` para ese día.
+**Síntoma**: la task corre, manda Roam, no hay nuevo registro en `conciliations` para ese día.
 
-**Causa**: Exitus y Vemo tienen tolerancia 0%. **Si hay UN solo PT que falle cualquier check** → HALT total.
+**Causa**: estos clientes tienen tolerancia **0%**. Un solo item que falle → HALT total.
 
-**El mensaje de Roam dice exactamente qué falló**:
-
+**Mensaje Roam con el desglose**:
 ```
 EXITUS conciliation: 3 unreconciled item(s) out of 152. Manual review required.
   - Amount mismatch (PT vs payments): 1 item(s), total MXN 1,200.00
   - Ownership mismatch: 2 item(s), total MXN 4,500.00
 ```
 
-**Diagnóstico**: usar el conteo y el monto para localizar el subset; cruzar con los catálogos 6.3 / 6.4 / 6.5.
+**Diagnóstico**: localizar el subset por el conteo y total, y cruzar con catálogos 6.3 / 6.4 / 6.5.
 
 ---
 
-### 6.10. Niko entre el 10% — corre pero no concilia todo
+### 6.11. Niko sobrepasó el 10% de tolerancia (HALT)
 
-**Síntoma**: Niko corre, persiste algunos, otros quedan en `REJECTED`. Conciliación parcial.
+**Síntoma**: NIKO halt-ea con mensaje `FAILING — exceeds 10% tolerance`.
 
-**Causa**: Niko permite hasta `unreconciled_ratio < 10%` por monto. Los items rechazados se marcan `status=REJECTED` en `payment_tape`.
+**Diagnóstico**: revisar el desglose por reason en Roam:
+- `STRIPE — Amount mismatch (PT vs payments)`
+- `STRIPE — Amount mismatch (PT vs disbursements)`
+- `STRIPE — Funds transfer not matched`
+- `Bank transfer not matched`
 
-**Cómo detectarlo**:
+---
+
+### 6.12. Niko entre 0-10% — conciliación parcial
+
+**Síntoma**: NIKO corre y persiste algunos; otros quedan como `REJECTED` en `payment_tape`.
+
+**Detectar**:
 ```sql
-SELECT id, gateway_payment_id, status, total_payment
+SELECT id, gateway_payment_id, gateway_code, status, total_payment
 FROM payment_tape
-WHERE company_id = <NIKO_id>
-  AND status = 'REJECTED'
-  AND payment_id IS NULL;
+WHERE company_id = 151 AND status = 'REJECTED' AND payment_id IS NULL;
 ```
-
-Mensaje en Roam:
-```
-NIKO conciliation: 4 unreconciled item(s) out of 50 (3.2% of total MXN 1,200,000.00). Within 10% tolerance — proceeding.
-  - STRIPE — Amount mismatch (PT vs payments): 2 item(s), total MXN ...
-  - Bank transfer not matched: 2 item(s), total MXN ...
-```
-
-**Solución**: revisar el detalle por reason en Roam, corregir manualmente los REJECTED y volver a cargar.
 
 ---
 
-### 6.11. Stripe `amount` no se dividió por 100
+### 6.13. Inklusiva entre 0-10% — conciliación parcial
 
-**Solo aplica a Niko**. Específico de Stripe.
+Misma lógica que Niko, pero por **count** (no por monto). Roam con desglose.
 
-**Síntoma**: `payments_amount_check` siempre falla con diferencias de 2 órdenes de magnitud.
+---
 
-**Diagnóstico**:
+### 6.14. `application_check` falla (Inklusiva)
+
+**Síntoma**: el item se concilia (suma correcta) pero queda REJECTED por desglose interno.
+
+**Validación**:
 ```python
-abs(payments.amount / 100 - PT.total_borrower_payment_id_amount)
-# Si es muy grande (~99x el monto), el /100 está mal o falta
+((current_principal + current_interest + moratory_interest + current_guarantee) - total_payment) < 1.1
 ```
+
+**Causa**: el banco mandó componentes (capital/interés/mora/garantía) que no suman al total recaudado.
+
+**Marca**: `payment_tape.status = REJECTED` (a veces con razón `PAGO_MAL_APLICADO`).
 
 ---
 
-## 7. Árbol de decisión para diagnosticar un pago no conciliado
+### 6.15. Llave especial `account_sweep` (Inklusiva)
+
+Para `borrower_contract_id == 'account_sweep'`, Inklusiva hace match tolerante: quita el sufijo `-iN` y empareja por `cumcount` en lugar de exact match.
+
+**Síntoma**: si el formato del `provider_id` correspondiente del payment no tiene `-iN`, o tiene un formato inconsistente, el match falla.
+
+---
+
+### 6.16. Conciliación interrumpida (`status = INTERRUPTED`)
+
+**Síntoma**: la última conciliación en `conciliations` quedó como `INTERRUPTED` o `ERROR`.
+
+**Causa**: la task se cortó (timeout, OOM, crash). El `finally` del conciliator marca `INTERRUPTED` si no terminó.
+
+**Detectar**:
+```sql
+SELECT id, company_code, type, status, creation_date
+FROM conciliations
+WHERE company_code = :borrower AND status IN ('INTERRUPTED', 'ERROR')
+ORDER BY creation_date DESC LIMIT 5;
+```
+
+**Solución**: re-correr la conciliación. La task crea una nueva `Conciliation` y marca la anterior como interrumpida.
+
+---
+
+### 6.17. `from_date` incorrecto
+
+Aplica al conciliator genérico (`PaymentVsPaymentTapeConciliator._get_from_date`).
+
+**Síntoma**: la conciliación arranca con `from_date > until_date`, levanta:
+```
+from_date filter is newer than until date_filter. just in case, check last conciliation date.
+```
+
+**Causa**: la configuración `start_conciliation_date` para el borrower es más reciente que `now - 1 day`.
+
+**Solución**: revisar `config.start_conciliation_date[borrower_key]` o `start_conciliation_date["default"]`.
+
+---
+
+### 6.18. Bugs detectados en código actual (informe)
+
+Si el chatbot detecta corridas fallidas en estos clientes, considerar como causa probable:
+
+| Cliente | Bug |
+|---------|-----|
+| INKLUSIVA | `conciliation_process` se usa antes de definirse (línea 300 de `task.py`) — puede romper en runtime. |
+| COOGRANCOLOMBIANA | `unreconciled_payments` se referencia pero nunca se carga — la task no compila ni corre. |
+| WELLI | Hardcoded en el conciliador genérico, no escala. |
+
+---
+
+## 7. Árbol de decisión: ¿por qué no concilió el pago X?
 
 ```
-¿El usuario pregunta por qué un payment X no concilió?
+Usuario pregunta: ¿Por qué el payment <X> no concilió?
 │
-├─ ¿Existe en payments_db.payments?
-│   ├─ NO → 6.1 (gateway no notificó / VAAS no capturó)
+├─ Detectar cliente (borrower_code)
+│
+├─ ¿El cliente tiene conciliación implementada?  (sección 5)
+│   ├─ NO → "No hay lógica de conciliación implementada para este cliente."
 │   └─ SI → seguir
 │
-├─ ¿Existe la fila en payment_tape con gateway_payment_id = provider_id?
+├─ ¿Existe el Payment en payments_db.payments?
+│   ├─ NO → 6.1 (gateway no notificó)
+│   └─ SI → seguir
+│
+├─ ¿Es un cliente con conciliación contra extracto (no PT)?  [ADDI, SOMOS, PAYJOY, ...]
+│   ├─ SI → ver 6.6 / 5.10-5.16 / Wompi gateway logic
+│   └─ NO → seguir con PT
+│
+├─ ¿Existe la fila en payment_tape correspondiente?
 │   ├─ NO → 6.2 (PT no ingestado)
 │   └─ SI → seguir
 │
-├─ ¿Hizo match en el merge?
-│   ├─ NO (PT.payments_uuid es NaN) → 6.3 (llave malformada)
+├─ ¿Hizo match en el merge (llave correcta)?
+│   ├─ NO → 6.3 (llave malformada — usar la tabla del cliente correspondiente)
 │   └─ SI → seguir
 │
-├─ ¿pt_vs_dbst_conci = True?
-│   ├─ NO → 6.4 (monto no cuadra)
+├─ ¿El monto cuadra (tolerancia del cliente)?
+│   ├─ NO → 6.4
 │   └─ SI → seguir
 │
-├─ ¿Cliente hace check_ownership?
-│   └─ SI (Exitus/Vemo):
-│       ├─ ¿check_ownership = True?  → seguir
-│       └─ NO → 6.5 (ownership mismatch)
-│
-├─ ¿Cliente hace check_funds_transfers? (Niko/Vemo)
+├─ ¿El cliente hace ownership check?  [EXITUS, VEMO, HILCO_ARRENDAMIENTOPRODUCTIVO]
 │   └─ SI:
-│       ├─ ¿check_funds_transfers = True? → reconciled = True ✓
-│       └─ NO → 6.6 / 6.7 / 6.8 (problema con extracto bancario)
+│       ├─ ¿owner_api == PT.owner? → seguir
+│       └─ NO → 6.5
 │
-└─ ¿La task halt-eó (tolerancia 0% en Exitus/Vemo)?
-    └─ SI → 6.9 (revisar mensaje Roam exacto)
+├─ ¿El cliente hace funds_transfers check?  [VEMO, NIKO]
+│   └─ SI:
+│       ├─ ¿check_funds_transfers? → seguir
+│       └─ NO → 6.6 / 6.7 / 6.9
+│
+├─ ¿El cliente hace application_check?  [INKLUSIVA]
+│   └─ SI:
+│       ├─ ¿((principal + interes + mora + garantia) - total) < 1.1? → reconciled ✓
+│       └─ NO → 6.14
+│
+└─ ¿La task halt-eó (0% o 10% tolerance)?  [EXITUS, VEMO, HILCO=0%; NIKO, INKLUSIVA=10%]
+    └─ SI → 6.10 / 6.11 / 6.13 — revisar Roam exacto
 ```
 
 ---
 
-## 8. Queries útiles para diagnóstico
+## 8. Queries útiles de diagnóstico
 
-### 8.1. Status global de un payment
-
+### 8.1. Estado global de un payment
 ```sql
-SELECT
-    id,
-    borrower_code,
-    provider_id,
-    payment_gateway_code,
-    status,
-    amount,
-    approved_date,
-    payment_tape_conciliation_id,
-    fund_transfer_conciliation_id,
-    disbursement_conciliation_id
+SELECT id, borrower_code, provider_id, payment_gateway_code, status, amount,
+       approved_date, payment_tape_conciliation_id, fund_transfer_conciliation_id,
+       disbursement_conciliation_id, borrower_db_conciliation_id
 FROM payments_db.payments
 WHERE id = :payment_id;
 ```
 
 ### 8.2. PT asociado a un payment
-
 ```sql
-SELECT
-    pt.id            AS pt_id,
-    pt.gateway_payment_id,
-    pt.gateway_code,
-    pt.total_payment,
-    pt.payment_date,
-    pt.owner,
-    pt.status,
-    pt.payment_id    AS linked_payment_id,
-    pt.borrower_payment_id,
-    pt.borrower_contract_id
+SELECT pt.id AS pt_id, pt.gateway_payment_id, pt.gateway_code, pt.total_payment,
+       pt.payment_date, pt.owner_name, pt.status, pt.payment_id, pt.borrower_payment_id,
+       pt.borrower_contract_id
 FROM payments_db.payment_tape pt
 WHERE pt.gateway_payment_id = (
     SELECT provider_id FROM payments_db.payments WHERE id = :payment_id
 );
 ```
 
-### 8.3. Payments aprobados sin conciliar para un borrower
-
+### 8.3. Payments aprobados sin conciliar
 ```sql
 SELECT id, provider_id, amount, approved_date, payment_gateway_code
 FROM payments_db.payments
@@ -750,103 +1134,139 @@ WHERE borrower_code = :borrower
 ORDER BY approved_date DESC;
 ```
 
-### 8.4. PT rechazados con su razón potencial
-
+### 8.4. PT rechazados con info de diagnóstico
 ```sql
-SELECT
-    pt.id,
-    pt.gateway_payment_id,
-    pt.gateway_code,
-    pt.total_payment,
-    pt.payment_date,
-    pt.owner,
-    p.id AS payment_exists,
-    p.amount AS payment_amount,
-    abs(pt.total_payment - p.amount) AS amount_diff,
-    pt.status
+SELECT pt.id, pt.gateway_payment_id, pt.gateway_code, pt.total_payment,
+       pt.payment_date, pt.owner_name, p.id AS payment_exists, p.amount AS payment_amount,
+       ABS(pt.total_payment - p.amount) AS amount_diff, pt.status
 FROM payment_tape pt
 LEFT JOIN payments p ON pt.gateway_payment_id = p.provider_id
-WHERE pt.status = 'REJECTED';
+WHERE pt.status = 'REJECTED'
+  AND pt.company_id = :company_id;
 ```
 
-### 8.5. Funds transfers candidatos para un PT (Niko banco)
-
+### 8.5. Funds transfers candidatos (Niko banco)
 ```sql
-SELECT *
-FROM funds_transfers
-WHERE account_id = :expected_account_id          -- ej. 'bbva_mxn'
+SELECT * FROM funds_transfers
+WHERE account_id = :expected_account_id
   AND DATE(date) = :payment_date
   AND currency = :currency
   AND ABS(amount - :transfer_amount) < 1;
 ```
 
 ### 8.6. Disbursements y sus FT (Niko Stripe)
-
 ```sql
-SELECT
-    d.id,
-    d.provider_id     AS payout_id,
-    d.report_date,
-    d.total_gross_amount,
-    d.payment_gateway_code,
-    d.currency,
-    ft.id             AS ft_id,
-    ft.amount         AS ft_amount,
-    ABS(d.total_gross_amount - ft.amount) AS amount_diff
+SELECT d.id, d.provider_id AS payout_id, d.report_date, d.total_gross_amount,
+       d.payment_gateway_code, d.currency,
+       ft.id AS ft_id, ft.amount AS ft_amount,
+       ABS(d.total_gross_amount - ft.amount) AS amount_diff
 FROM disbursements d
 LEFT JOIN funds_transfers ft
-  ON ft.date = d.report_date
- AND ft.account_id = :expected_account_id
+  ON ft.date = d.report_date AND ft.account_id = :expected_account_id
 WHERE d.id = :disbursement_id;
 ```
 
-### 8.7. Ownership esperado de un contrato
-
-Esto no es SQL — sale de la Ownership API:
-
-```python
-ownership_client.get_atom_owners(contract_ids=[<contract_id>], company_id=<borrower_id>)
-# Retorna: originator_contract_id → owner_company_id
-# Lookup esperado:
-#   Exitus → 187 = LENDER_EXITUSMAESTRO_HILCO
-#   Vemo   → 189 = LENDER_VEMOMAESTRO5902_HILCO
-#                  190 = LENDER_VEMOMAESTRO1401_HILCO
-#                  191 = LENDER_VEMOMAESTRO5926_HILCO
-```
-
-### 8.8. Última conciliación corrida para un borrower
-
+### 8.7. Última corrida para un borrower
 ```sql
 SELECT id, company_code, type, from_date, until_date, status, creation_date
 FROM conciliations
 WHERE company_code = :borrower
-ORDER BY creation_date DESC
-LIMIT 10;
+ORDER BY creation_date DESC LIMIT 10;
+```
+
+### 8.8. Conteo de reconciled vs unreconciled hoy
+```sql
+SELECT pt.status, COUNT(*) AS cnt, SUM(pt.total_payment) AS total
+FROM payment_tape pt
+WHERE pt.company_id = :company_id
+  AND DATE(pt.last_update_date) = CURRENT_DATE
+GROUP BY pt.status;
+```
+
+### 8.9. Llave de Bancolombia Correspondent (Inklusiva)
+Para reproducir el match:
+```python
+# Format from PT side
+formatted_date = pd.to_datetime(transfer_date).strftime('%Y-%m-%dT05:00:00+00:00')
+amount_str = str(int(net_amount)) if net_amount == int(net_amount) else str(net_amount)
+llave_base = f"{formatted_date}-{amount_str}-{payer_legal_id}"
+# Add -iN suffix according to cumcount
+llave = (llave_base + f"-i{N}").upper()
+```
+
+### 8.10. Ownership API (NO es SQL)
+```python
+ownership_client.get_atom_owners(contract_ids=[<contract_id>], company_id=<borrower_id>)
+# Retorna pandas DataFrame con columnas: originator_contract_id, owner_company_id
 ```
 
 ---
 
-## Resumen final por cliente
+## 9. Tabla resumen comparativa de todos los clientes
 
-| Aspecto | EXITUS | NIKO | VEMO |
-|---------|--------|------|------|
-| Llave principal | `PT.gateway_payment_id` ↔ `payment.provider_id` | Stripe: `gateway_payment_id` ↔ `provider_id`<br>Banco: `(account, date, transfer_amount)` | `PT.borrower_payment_id` ↔ `payment.provider_extra_information.reference` |
-| Suma agrupada por | `gateway_payment_id` | `gateway_payment_id` | `borrower_payment_id` |
-| Concilia vs extracto bancario | NO (forzado a True) | SÍ (Stripe vía disbursement; banco directo) | SÍ |
-| Check de ownership | SÍ (Exitus / LENDER_EXITUSMAESTRO_HILCO) | NO | SÍ (3 maestros de Hilco) |
-| Conciliation types persistidos | `PAYMENTS___VS___PAYMENT_TAPE` | `DISBURSEMENTS___VS___FUNDS_TRANSFERS` + `PAYMENTS___VS___PAYMENT_TAPE` + `PAYMENT_TAPE___VS___BANK` | `PAYMENTS___VS___FUNDS_TRANSFERS` + `PAYMENTS___VS___PAYMENT_TAPE` |
-| Tolerancia por monto | < 1 | < 1 MXN | < 1 |
-| Tolerancia global de unreconciled | 0% (HALT cualquier fallo) | 10% por monto | 0% (HALT cualquier fallo) |
-| Capa intermedia de disbursement | NO | SÍ (solo Stripe) | NO |
-| Roam group | `e38b3644-6c1a-4aa4-a76b-4a724dd24de4` | `5caf710f-edd2-4d32-8650-af5b1ddf8e4d` | `e38b3644-6c1a-4aa4-a76b-4a724dd24de4` |
-| Acción sobre unreconciled | `payment_tape.status = REJECTED` (si llega a persistir) | `payment_tape.status = REJECTED` | `payment_tape.status = REJECTED` (si llega a persistir) |
+| Cliente | Arquitectura | País | Llave primaria | Tolerancia amt | Unreconciled HALT | Concilia vs Banco | Ownership Check | application_check | Special |
+|---------|--------------|------|----------------|----------------|-------------------|-------------------|-----------------|-------------------|---------|
+| INKLUSIVA | Scrappy | CO | Por gateway (Bcol composite, Efecty composite, PSE/Wompi simple) | < 0.1 | 10% por count | NO | NO | SI (< 1.1) | account_sweep |
+| COOGRANCOLOMBIANA | Scrappy | CO | Idem Inklusiva (subset) | < 0.1 | No HALT (email CSV) | NO | NO | NO | Insert como INKLUSIVA |
+| EQUITY_LINK | Scrappy | MX | `gateway_payment_id` (sin prefijo `sitb2`) | < 1 | No HALT (XLSX email) | NO | NO (fiso) | NO | try/except Roam |
+| EXITUS | Scrappy | MX | `gateway_payment_id` (sin sufijo `-N`) | < 1 | 0% (HALT) | NO (forzado True) | SI | NO | — |
+| HILCO_ARRENDAMIENTOPRODUCTIVO | Scrappy | MX | `borrower_payment_id` ↔ `payment.provider_extra_information.reference` | < 1 | 0% (HALT) | NO | SI | NO | Blacklist S3 diaria |
+| NIKO | Scrappy | MX | Stripe: `pi_...`; Banco: `(account, date, transfer_amount)` | < 1 MXN | 10% por **monto** | SI (Stripe vía disb; banco directo) | NO | NO | Stripe en centavos, 3-layer match |
+| VEMO | Scrappy | MX | `borrower_payment_id` ↔ `payment.provider_extra_information.reference` | < 1 | 0% (HALT) | SI (date + aux_var_string_1) | SI (3 maestros) | NO | — |
+| SOLVE | Scrappy (CSV) | — | `transfer_id` ↔ `payment_reference` | < 0.1 | No HALT (log) | — | NO | NO | Ad-hoc CSV |
+| ADDI | Entrypoint | CO | Por gateway (Bcol Corr, Wompi, DRUO, PSE) | <= 1 | — | SI | — | — | borrower_db extra |
+| ADDI_BNPN | Entrypoint | CO | Solo PSE | <= 1 | — | SI | — | — | — |
+| WELLI | Entrypoint (special) | CO | Wompi: `order_id` (PSE: `provider_id`); Bcol Corr: `amount+date+gateway` | exact eq | — | SI | — | — | Lógica custom inline |
+| SOMOS | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion |
+| PAYJOY | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion |
+| SISTECREDITO | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | EFECTY + GANA |
+| CREDIORBE | Entrypoint | CO | Genérico (SP) + match amount+reference en bank | <= 1 | — | SI | — | — | `_last_three_months` window |
+| DELTACREDIT | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion |
+| YUPPI | Entrypoint | — | Genérico | <= 1 | — | SI | — | — | DRUO/Bcol_collect/NEQUI |
 
 ---
 
-## Tips de implementación para el chatbot
+## 10. Tips de implementación para el chatbot
 
-1. **Cuando el usuario pregunte "¿por qué no concilió X?"**: empezar por el paso 1 del [árbol de decisión](#7-árbol-de-decisión-para-diagnosticar-un-pago-no-conciliado), correr las queries de la sección 8 en orden.
-2. **Cuando el usuario pregunte "¿qué errores hubo en la última corrida?"**: buscar el mensaje más reciente de Roam para el group_id del cliente (o leer del log de la task). Cada mensaje incluye el desglose por razón.
-3. **Si el usuario menciona un cliente específico**: ya sabes el roam_group, los conciliation types esperados, y la tolerancia. Eso te permite responder cosas como *"En Exitus la tolerancia es 0%, así que la corrida del 2025-05-26 falló por completo. La razón fue ownership mismatch en 2 contratos"*.
-4. **Diferencia clave Niko vs los demás**: Niko sí persiste conciliaciones parciales si está bajo el 10%. Exitus y Vemo no — o todo o nada.
-5. **Para reportar la causa raíz**: siempre devolver (a) qué check falló, (b) el valor esperado vs el observado, (c) la query SQL que lo demuestra.
+1. **Identificar el cliente primero**. Cada cliente tiene una lógica distinta. Mapea cualquier alias del usuario al `Borrower.value` (mayúscula, sin espacios).
+
+2. **Detectar la arquitectura del cliente**:
+   - **Scrappy** → revisar mensajes de Roam de su `ROAM_GROUP_ID`.
+   - **Entrypoint (script)** → revisar Slack channel (`NOTIFIER___SLACK___<BORROWER>___CHANNEL`).
+
+3. **Cuando el usuario pregunte "¿por qué no concilió X?"**:
+   - Paso 1: identificar el `Payment.id` y el `PaymentTapeItem.id` (si existe).
+   - Paso 2: usar el [árbol de decisión](#7-árbol-de-decisión-por-qué-no-concilió-el-pago-x).
+   - Paso 3: responder con (a) qué check falló, (b) valor esperado vs observado, (c) query que lo demuestra.
+
+4. **Cuando el usuario pregunte "¿qué pasó en la última corrida?"**:
+   - Query la última `Conciliation` por `(borrower, creation_date DESC)`.
+   - Buscar mensajes de Roam/Slack recientes del cliente (cada cliente Scrappy tiene su Roam group; los Entrypoints tienen Slack channels).
+   - Resumir: status, cantidad reconciled / unreconciled, principales razones.
+
+5. **Diferencia importante entre arquitecturas**:
+   - **Scrappy clients** (Inklusiva, Niko, Vemo, etc.) mandan resúmenes detallados a Roam con desglose por reason.
+   - **Entrypoint clients** (ADDI, SOMOS, etc.) usan `result_checker` y mandan al Slack channel.
+
+6. **Banderas de alarma por cliente**:
+   - **EXITUS / VEMO / HILCO**: 0% tolerance → cualquier fallo destruye toda la corrida.
+   - **INKLUSIVA**: 10% por count + `application_check` con tolerancia < 1.1.
+   - **NIKO**: 10% por **monto** (no por count) + Stripe needs `/100`.
+   - **EQUITY_LINK**: NUNCA halt-ea; manda XLSX, conviene mirar el reporte.
+   - **COOGRANCOLOMBIANA**: bug actual — la task no carga `unreconciled_payments`, podría no estar corriendo.
+
+7. **Para responder rápido**:
+   - Cliente + razón → catálogo 6.X.
+   - Monto exacto → 6.4 + tabla de tolerancias.
+   - Llave → 6.3 + tabla de llaves por cliente en sección 5.
+
+8. **Cuando un cliente "no tiene conciliación"** (sección 5.17): explicar que solo tiene scraping/distribution. No hay errores que diagnosticar.
+
+9. **Glosario rápido**:
+   - **PT** = `payment_tape` (archivo del banco/borrower).
+   - **FT** = `funds_transfers` (extracto bancario).
+   - **Provider ID** = ID del gateway en `payments.provider_id`.
+   - **Cesión** = el contrato fue vendido a un inversionista (Hilco, Accial, etc.); cambia el ownership.
+   - **Barrido** = proceso de Inklusiva que sintetiza PT para pagos viejos no conciliados.
+   - **Disbursement** = payout agregado de Stripe.
+   - **Punto de no retorno** = en el código de Scrappy, marca donde empieza la persistencia (después de validaciones).
