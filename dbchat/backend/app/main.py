@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import dashboards as dashboards_store
 from . import glossary as glossary_store
 from . import memory as memory_store
+from . import warnings_store
 from .agent import stream_chat
 from .claude_auth import detect_claude_cli, detect_claude_code_token
 from .config_store import clear_config, load_config, save_config
@@ -654,6 +655,45 @@ def update_layout_route(dashboard_id: str, req: LayoutsUpdate):
     layouts = [ly.model_dump() for ly in req.layouts]
     if not dashboards_store.update_layout(dashboard_id, layouts):
         raise HTTPException(404, "Dashboard not found")
+    return {"ok": True}
+
+
+# --- Warnings (conciliation analysis history) --------------------------------
+
+
+class WarningCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    client: str = Field(..., min_length=1, max_length=120)
+    title: str = Field(..., min_length=1, max_length=240)
+    severity: str = Field(default="medium", pattern="^(ok|low|medium|high)$")
+    tables_reviewed: list[str] = Field(default_factory=list, max_length=32)
+    possible_fix: str | None = Field(default=None, max_length=2000)
+    details: str | None = Field(default=None, max_length=8000)
+    sql_run: list[str] = Field(default_factory=list, max_length=16)
+    user_question: str | None = Field(default=None, max_length=1000)
+
+
+@app.get("/api/warnings")
+def list_warnings_route():
+    items = warnings_store.list_warnings()
+    return {"warnings": items, "count": len(items)}
+
+
+@app.post("/api/warnings")
+def create_warning_route(req: WarningCreate):
+    return warnings_store.create_warning(req.model_dump())
+
+
+@app.delete("/api/warnings/{warning_id}")
+def delete_warning_route(warning_id: str):
+    if not warnings_store.delete_warning(warning_id):
+        raise HTTPException(404, "Warning not found")
+    return {"ok": True}
+
+
+@app.delete("/api/warnings")
+def clear_warnings_route():
+    warnings_store.clear_warnings()
     return {"ok": True}
 
 

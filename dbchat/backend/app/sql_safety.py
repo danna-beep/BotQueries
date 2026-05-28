@@ -45,7 +45,12 @@ def validate_read_only_sql(sql: str) -> SqlValidationResult:
     if not cleaned:
         return SqlValidationResult(ok=False, reason="SQL is empty after stripping comments.")
 
-    if ";" in cleaned:
+    # Multi-statement check via sqlparse.split (string-literal aware) — a naive
+    # `";" in cleaned` would fire on semicolons inside quoted strings like
+    # 'foo; bar' in a CASE WHEN, which are perfectly valid in a single SELECT.
+    statements = [s.strip().rstrip(";").strip() for s in sqlparse.split(cleaned)]
+    statements = [s for s in statements if s]
+    if len(statements) > 1:
         return SqlValidationResult(
             ok=False,
             reason="Multiple statements are not allowed. Submit one SELECT/WITH query.",

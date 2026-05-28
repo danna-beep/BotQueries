@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -27,7 +28,8 @@ MAX_ROW_LIMIT = 100_000
 # Interactive chat/query timeout: enough for real reports on big tables, but
 # bounded so a runaway query (missing index, full scan) fails clearly instead
 # of hanging the UI. Exports keep the connection-level (long) timeout.
-INTERACTIVE_QUERY_TIMEOUT_S = 300
+# Override via DBCHAT_QUERY_TIMEOUT_S env var if a specific session needs more.
+INTERACTIVE_QUERY_TIMEOUT_S = int(os.getenv("DBCHAT_QUERY_TIMEOUT_S", "600"))
 
 log = logging.getLogger(__name__)
 

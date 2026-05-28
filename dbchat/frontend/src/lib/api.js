@@ -218,6 +218,34 @@ export async function updateDashboardLayout(dashboardId, layouts) {
   return jsonOrThrow(res);
 }
 
+// ---- Warnings ----
+
+export async function listWarnings() {
+  const res = await fetch(`${BASE}/warnings`);
+  return jsonOrThrow(res);
+}
+
+export async function createWarning(payload) {
+  const res = await fetch(`${BASE}/warnings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function deleteWarning(id) {
+  const res = await fetch(`${BASE}/warnings/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  return jsonOrThrow(res);
+}
+
+export async function clearWarnings() {
+  const res = await fetch(`${BASE}/warnings`, { method: "DELETE" });
+  return jsonOrThrow(res);
+}
+
 export async function streamChat({ message, history, apiKey, mode, onEvent, signal }) {
   const res = await fetch(`${BASE}/chat`, {
     method: "POST",

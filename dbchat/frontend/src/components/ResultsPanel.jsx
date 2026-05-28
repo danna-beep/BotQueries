@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   BarChart3,
   BookmarkPlus,
   Check,
@@ -23,6 +24,7 @@ import {
   detectAxes,
 } from "./Chart.jsx";
 import SaveToDashboardModal from "./SaveToDashboardModal.jsx";
+import WarningsView from "./WarningsView.jsx";
 
 function Cell({ value }) {
   if (value === null || value === undefined) {
@@ -495,8 +497,10 @@ export default function ResultsPanel({ result, onResult }) {
         <Tab id="table" icon={Table2} label="Tabla" />
         <Tab id="chart" icon={BarChart3} label="Gráfica" />
         <Tab id="sql" icon={Code2} label="SQL" />
+        <div className="w-px h-4 bg-border mx-1" />
+        <Tab id="warnings" icon={AlertTriangle} label="Warnings" />
 
-        {result && tab !== "sql" && (
+        {result && tab !== "sql" && tab !== "warnings" && (
           <div className="ml-auto flex items-center gap-1.5 flex-wrap">
             <span className="chip">
               <span className="w-1 h-1 rounded-full bg-accent" />
@@ -637,6 +641,7 @@ export default function ResultsPanel({ result, onResult }) {
       {tab === "sql" && (
         <SqlEditor result={result} onResult={onResult} onError={() => {}} />
       )}
+      {tab === "warnings" && <WarningsView />}
     </section>
   );
 }

@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
+  AlertTriangle,
   Check,
+  CheckCircle2,
+  ChevronDown,
   FileDown,
   Key,
   Loader2,
@@ -10,14 +15,104 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { downloadUrl, runQuery, streamChat } from "../lib/api.js";
+import {
+  createWarning,
+  downloadUrl,
+  runQuery,
+  streamChat,
+} from "../lib/api.js";
 import { cn, formatNumber } from "../lib/utils.js";
 
+// Markdown components — tight spacing, themed, with code/quote/table styles
+// that match the rest of the chat panel.
+const MD_COMPONENTS = {
+  p: (props) => <p className="my-1.5 leading-relaxed" {...props} />,
+  strong: (props) => (
+    <strong className="font-semibold text-fg" {...props} />
+  ),
+  em: (props) => <em className="italic text-fg/90" {...props} />,
+  ul: (props) => (
+    <ul className="my-1.5 ml-4 list-disc space-y-1 marker:text-accent/70" {...props} />
+  ),
+  ol: (props) => (
+    <ol className="my-1.5 ml-4 list-decimal space-y-1 marker:text-accent/70" {...props} />
+  ),
+  li: (props) => <li className="leading-relaxed pl-1" {...props} />,
+  h1: (props) => (
+    <h1 className="mt-3 mb-1.5 text-[15px] font-semibold tracking-tight" {...props} />
+  ),
+  h2: (props) => (
+    <h2 className="mt-3 mb-1.5 text-[14px] font-semibold tracking-tight text-fg" {...props} />
+  ),
+  h3: (props) => (
+    <h3 className="mt-2 mb-1 text-[13px] font-semibold tracking-tight text-fg/95" {...props} />
+  ),
+  blockquote: (props) => (
+    <blockquote
+      className="my-2 pl-3 border-l-2 border-accent/40 text-fg/80 italic"
+      {...props}
+    />
+  ),
+  code: ({ inline, className, children, ...props }) => {
+    if (inline) {
+      return (
+        <code
+          className="px-1 py-0.5 rounded bg-bg/60 border border-border/60 font-mono text-[11.5px] text-accent"
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    }
+    return (
+      <pre className="my-2 px-3 py-2 rounded-md bg-bg/60 border border-border/60 overflow-x-auto">
+        <code className="font-mono text-[11.5px] text-fg/90 whitespace-pre-wrap break-words">
+          {children}
+        </code>
+      </pre>
+    );
+  },
+  hr: () => <hr className="my-3 border-border/50" />,
+  a: (props) => (
+    <a
+      className="text-accent underline-offset-2 hover:underline"
+      target="_blank"
+      rel="noopener noreferrer"
+      {...props}
+    />
+  ),
+  table: (props) => (
+    <div className="my-2 overflow-x-auto">
+      <table className="min-w-full text-[12px] border border-border/60" {...props} />
+    </div>
+  ),
+  th: (props) => (
+    <th
+      className="text-left px-2 py-1 bg-surface2/60 border-b border-border/60 font-medium text-[11px] text-muted"
+      {...props}
+    />
+  ),
+  td: (props) => (
+    <td className="px-2 py-1 border-b border-border/40 align-top" {...props} />
+  ),
+};
+
+function ProseMarkdown({ text }) {
+  return (
+    <div className="text-[13.5px] text-fg/90">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 // Parses an assistant text message and splits it into prose paragraphs and
-// fenced ```sql code blocks. Used by preview mode to render an "Ejecutar query"
-// button next to each proposed SQL block.
-function splitTextWithSqlBlocks(text) {
-  const re = /```sql\s*\n([\s\S]*?)```/gi;
+// fenced ```sql / ```warning code blocks. SQL blocks render with an "ejecutar"
+// button (preview mode); warning blocks are auto-persisted into the Warnings
+// tab and rendered as a saved-card.
+function splitTextWithBlocks(text) {
+  const re = /```(sql|warning)\s*\n([\s\S]*?)```/gi;
   const parts = [];
   let last = 0;
   let m;
@@ -26,7 +121,22 @@ function splitTextWithSqlBlocks(text) {
       const prose = text.slice(last, m.index).trim();
       if (prose) parts.push({ kind: "prose", text: prose });
     }
-    parts.push({ kind: "sql", sql: m[1].trim() });
+    const tag = m[1].toLowerCase();
+    const body = m[2].trim();
+    if (tag === "sql") {
+      parts.push({ kind: "sql", sql: body });
+    } else if (tag === "warning") {
+      let payload = null;
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        // Bot emitted a malformed JSON — render the raw text so the user can see.
+        parts.push({ kind: "prose", text: "```warning\n" + body + "\n```" });
+        last = m.index + m[0].length;
+        continue;
+      }
+      parts.push({ kind: "warning", warning: payload });
+    }
     last = m.index + m[0].length;
   }
   const tail = text.slice(last).trim();
@@ -133,9 +243,139 @@ function SqlProposalBlock({ sql, onResult }) {
 const EXAMPLES = [
   "Cuántos pagos hizo ADDI ayer",
   "Top 10 borrowers por volumen de pagos este mes",
-  "Pagos no conciliados de SOMOS de la última semana",
-  "Distribución de pagos por gateway para ADDI",
+  "¿Por qué no se conciliaron los últimos 10 pagos de Niko?",
+  "Revisa si hay errores de conciliación en Vemo esta semana",
 ];
+
+const SEV_PILL = {
+  ok: "border-accent/40 bg-accent/10 text-accent",
+  low: "border-accent/40 bg-accent/10 text-accent",
+  medium: "border-accent2/40 bg-accent2/10 text-accent2",
+  high: "border-danger/40 bg-danger/10 text-danger",
+};
+
+function WarningSavedBlock({ warning, userQuestion }) {
+  const [state, setState] = useState("posting");
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sev = ["ok", "low", "medium", "high"].includes(
+          (warning.severity || "").toLowerCase()
+        )
+          ? warning.severity.toLowerCase()
+          : "medium";
+        const payload = {
+          client: String(warning.client || "—").slice(0, 120) || "—",
+          title:
+            String(
+              warning.title || warning.warning || "Análisis de conciliación"
+            ).slice(0, 240) || "Análisis de conciliación",
+          severity: sev,
+          tables_reviewed: Array.isArray(warning.tables_reviewed)
+            ? warning.tables_reviewed.map(String).slice(0, 32)
+            : [],
+          possible_fix: warning.possible_fix
+            ? String(warning.possible_fix).slice(0, 2000)
+            : null,
+          details: warning.details
+            ? String(warning.details).slice(0, 8000)
+            : null,
+          sql_run: Array.isArray(warning.sql_run)
+            ? warning.sql_run.map(String).slice(0, 16)
+            : [],
+          user_question: userQuestion
+            ? String(userQuestion).slice(0, 1000)
+            : null,
+        };
+        await createWarning(payload);
+        if (cancelled) return;
+        setState("done");
+        window.dispatchEvent(new CustomEvent("warnings:changed"));
+      } catch (e) {
+        if (cancelled) return;
+        setError(e.message || String(e));
+        setState("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const sev = (warning.severity || "medium").toLowerCase();
+  const isOk = sev === "ok";
+  const pill = SEV_PILL[sev] || SEV_PILL.medium;
+  const Icon = isOk ? CheckCircle2 : AlertTriangle;
+
+  return (
+    <div className="panel-inset my-3 overflow-hidden border-l-2 border-l-accent2/70">
+      <div className="flex items-start gap-2.5 px-3 py-2.5">
+        <span
+          className={cn(
+            "inline-flex items-center justify-center w-6 h-6 rounded-md border shrink-0",
+            pill
+          )}
+        >
+          <Icon size={12} strokeWidth={2} />
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+              {warning.client || "—"}
+            </span>
+            <span className={cn("chip", pill)}>{sev}</span>
+            {state === "posting" && (
+              <span className="text-[10px] font-mono text-muted/70 flex items-center gap-1">
+                <Loader2 size={9} className="animate-spin" />
+                guardando…
+              </span>
+            )}
+            {state === "done" && (
+              <span className="text-[10px] font-mono text-accent flex items-center gap-1">
+                <Check size={9} />
+                guardado en Warnings
+              </span>
+            )}
+            {state === "error" && (
+              <span className="text-[10px] font-mono text-danger flex items-center gap-1">
+                <X size={9} />
+                no se pudo guardar
+              </span>
+            )}
+          </div>
+          <div className="mt-1 text-[12.5px] text-fg/90 font-medium leading-snug">
+            {warning.title || "Análisis de conciliación"}
+          </div>
+          {warning.tables_reviewed?.length > 0 && (
+            <div className="mt-1.5 flex items-center gap-1 flex-wrap">
+              {warning.tables_reviewed.map((t) => (
+                <span
+                  key={t}
+                  className="font-mono text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg/40 text-fg/80"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+          {warning.possible_fix && (
+            <p className="mt-1.5 text-[11.5px] text-accent2/90 leading-relaxed">
+              <span className="text-muted/70 mr-1">corrección:</span>
+              {warning.possible_fix}
+            </p>
+          )}
+          {error && (
+            <p className="mt-1 text-[10.5px] font-mono text-danger">{error}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ToolCallBlock({ part }) {
   const isExport = part.toolName === "export_sql";
@@ -230,7 +470,7 @@ function ToolCallBlock({ part }) {
   );
 }
 
-function AssistantMessage({ msg, onResult }) {
+function AssistantMessage({ msg, onResult, userQuestion }) {
   return (
     <div className="animate-slide-up">
       <div className="flex items-center gap-2 mb-1.5">
@@ -244,18 +484,30 @@ function AssistantMessage({ msg, onResult }) {
       <div className="prose-chat">
         {msg.parts.map((p, i) => {
           if (p.type === "text") {
-            const blocks = splitTextWithSqlBlocks(p.text);
+            const blocks = splitTextWithBlocks(p.text);
             return (
               <div key={i}>
-                {blocks.map((b, j) =>
-                  b.kind === "sql" ? (
-                    <SqlProposalBlock key={j} sql={b.sql} onResult={onResult} />
-                  ) : (
-                    <p key={j} className="whitespace-pre-wrap">
-                      {b.text}
-                    </p>
-                  )
-                )}
+                {blocks.map((b, j) => {
+                  if (b.kind === "sql") {
+                    return (
+                      <SqlProposalBlock
+                        key={j}
+                        sql={b.sql}
+                        onResult={onResult}
+                      />
+                    );
+                  }
+                  if (b.kind === "warning") {
+                    return (
+                      <WarningSavedBlock
+                        key={j}
+                        warning={b.warning}
+                        userQuestion={userQuestion}
+                      />
+                    );
+                  }
+                  return <ProseMarkdown key={j} text={b.text} />;
+                })}
               </div>
             );
           }
@@ -305,12 +557,47 @@ export default function ChatPanel({
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [keyDraft, setKeyDraft] = useState(apiKey || "");
   const scrollRef = useRef(null);
+  // Track whether the user is "pinned" to the bottom of the chat. If they
+  // scroll up manually (to read previous messages), we stop auto-scrolling
+  // on new stream events; we only re-pin when they manually scroll back down.
+  const stickToBottomRef = useRef(true);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+
+  const onScrollChat = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distance < 60; // 60px tolerance
+    stickToBottomRef.current = atBottom;
+    setShowJumpToBottom(!atBottom);
+  };
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stickToBottomRef.current = true;
+    setShowJumpToBottom(false);
+  };
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (!scrollRef.current) return;
+    if (stickToBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, streaming]);
+
+  // When the user sends a new message, always snap back to the bottom.
+  useEffect(() => {
+    if (!scrollRef.current) return;
+    const last = messages[messages.length - 1];
+    if (last?.role === "user") {
+      stickToBottomRef.current = true;
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      setShowJumpToBottom(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length]);
 
   useEffect(() => {
     setKeyDraft(apiKey || "");
@@ -455,7 +742,7 @@ export default function ChatPanel({
   };
 
   return (
-    <section className="panel flex flex-col h-full overflow-hidden animate-fade-in">
+    <section className="panel flex flex-col h-full overflow-hidden animate-fade-in relative">
       <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-border">
         <Sparkles size={14} className="text-accent" strokeWidth={1.8} />
         <span className="text-[12.5px] font-medium tracking-tight text-fg/90">
@@ -517,7 +804,11 @@ export default function ChatPanel({
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 overflow-auto scrollbar-thin px-3 py-4 space-y-4">
+      <div
+        ref={scrollRef}
+        onScroll={onScrollChat}
+        className="flex-1 overflow-auto scrollbar-thin px-3 py-4 space-y-4 relative"
+      >
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center px-6">
             <p className="font-display italic text-[42px] leading-[1.05] text-fg/85">
@@ -543,13 +834,25 @@ export default function ChatPanel({
             </div>
           </div>
         ) : (
-          messages.map((m, i) =>
-            m.role === "user" ? (
-              <UserMessage key={i} msg={m} />
-            ) : (
-              <AssistantMessage key={i} msg={m} onResult={onResult} />
-            )
-          )
+          messages.map((m, i) => {
+            if (m.role === "user") return <UserMessage key={i} msg={m} />;
+            // Find the user message that triggered this assistant turn (walk back).
+            let userQ = null;
+            for (let k = i - 1; k >= 0; k--) {
+              if (messages[k].role === "user") {
+                userQ = messages[k].text;
+                break;
+              }
+            }
+            return (
+              <AssistantMessage
+                key={i}
+                msg={m}
+                onResult={onResult}
+                userQuestion={userQ}
+              />
+            );
+          })
         )}
 
         {error && (
@@ -565,6 +868,17 @@ export default function ChatPanel({
           </div>
         )}
       </div>
+
+      {showJumpToBottom && (
+        <button
+          onClick={scrollToBottom}
+          className="absolute bottom-[88px] left-1/2 -translate-x-1/2 z-10 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-bg shadow-lg border border-accent/40 text-[11px] font-medium hover:brightness-110 transition-all animate-slide-up"
+          title="Bajar al mensaje más reciente"
+        >
+          <ChevronDown size={12} strokeWidth={2.5} />
+          Ir al final
+        </button>
+      )}
 
       <div className="border-t border-border p-2.5">
         <div className="relative">
