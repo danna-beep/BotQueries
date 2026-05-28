@@ -9,8 +9,15 @@ import time
 from pathlib import Path
 from typing import Any, Iterator
 
-from .db import DbConfig, QueryResult, escape_literal, friendly_error, run_select
-from .exporters import ExportFormat, export_results
+from .db import (
+    DbConfig,
+    QueryResult,
+    escape_literal,
+    friendly_error,
+    run_select,
+    stream_select,
+)
+from .exporters import ExportFormat, export_csv_streaming, export_results
 from .sql_safety import apply_default_limit, validate_read_only_sql
 
 
@@ -200,6 +207,27 @@ def export_query(
     result = run_select(cfg, safe_sql, max_rows=max_rows)
     path = export_results(result.columns, result.rows, fmt, filename)
     return path, result
+
+
+def export_query_csv_unlimited(
+    cfg: DbConfig,
+    sql: str,
+    filename: str = "query_result",
+) -> tuple[Path, int]:
+    """Export a CSV with NO row cap, streaming rows straight to disk.
+
+    Does not append a default LIMIT — the only limit is whatever the user's own
+    SQL specifies. Memory stays flat thanks to the server-side cursor, so this
+    is safe even for multi-million-row tables. Returns (path, row_count).
+    """
+    validation = validate_read_only_sql(sql)
+    if not validation.ok:
+        raise ValueError(f"SQL rejected: {validation.reason}")
+    # No apply_default_limit → full result set. No per-query MAX_EXECUTION_TIME
+    # override either; relies on the connection read_timeout for runaway queries.
+    with stream_select(cfg, validation.normalized_sql) as (columns, rows):
+        path, count = export_csv_streaming(columns, rows, filename_hint=filename)
+    return path, count
 
 
 def get_table_samples(cfg: DbConfig, table: str, n: int = 2) -> list[dict[str, Any]]:

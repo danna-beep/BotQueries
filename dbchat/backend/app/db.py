@@ -6,11 +6,12 @@ import logging
 import os
 import socket
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 import pymysql
-from pymysql.cursors import DictCursor
+from pymysql.cursors import DictCursor, SSDictCursor
 
 log = logging.getLogger(__name__)
 
@@ -184,6 +185,50 @@ def run_select(
             truncated=truncated,
         )
     finally:
+        try:
+            conn.close()
+        except Exception:
+            log.debug("Error closing MySQL connection", exc_info=True)
+
+
+@contextmanager
+def stream_select(
+    cfg: DbConfig,
+    sql: str,
+    max_seconds: int | None = None,
+):
+    """Stream a read-only query using a server-side cursor (no client buffering).
+
+    Yields (columns, row_iterator). Rows are fetched lazily from MySQL one at a
+    time, so memory stays flat regardless of result size — used for unlimited
+    CSV export. The connection stays open for the lifetime of the context, so
+    the caller must consume the iterator inside the `with` block.
+    """
+    log.info("Streaming SQL (max_seconds=%s): %s",
+             max_seconds, sql.replace("\n", " ")[:500])
+    conn = _open_connection(cfg)
+    cur = conn.cursor(SSDictCursor)
+    try:
+        if max_seconds is not None:
+            try:
+                cur.execute(
+                    f"SET SESSION MAX_EXECUTION_TIME = {max(int(max_seconds * 1000), 1000)}"
+                )
+            except pymysql.MySQLError:
+                pass
+        cur.execute(sql)
+        columns = [d[0] for d in (cur.description or [])]
+
+        def _row_iter() -> Iterator[dict[str, Any]]:
+            for row in cur:
+                yield _sanitize_row(row)
+
+        yield columns, _row_iter()
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            log.debug("Error closing streaming cursor", exc_info=True)
         try:
             conn.close()
         except Exception:

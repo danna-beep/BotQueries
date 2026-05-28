@@ -43,6 +43,10 @@ export function detectAxes(result) {
     return { xKey: null, ySeries: [], xIsDate: false };
   }
   const sample = result.rows[0];
+  const numericCols = result.columns.filter((c) => isNumeric(sample[c]));
+  const nonNumericCols = result.columns.filter((c) => !isNumeric(sample[c]));
+
+  // Prefer a date column as X; otherwise the first non-numeric column.
   let x = null;
   let xIsDate = false;
   for (const c of result.columns) {
@@ -52,18 +56,20 @@ export function detectAxes(result) {
       break;
     }
   }
+  if (!x && nonNumericCols.length) x = nonNumericCols[0];
+
+  // All columns are numeric (no categorical/date label):
   if (!x) {
-    for (const c of result.columns) {
-      if (!isNumeric(sample[c])) {
-        x = c;
-        break;
-      }
+    // 0–1 numeric columns → keep it as the metric (single-value KPI / ring),
+    // no real X axis. Avoids "stealing" the only column and leaving no metric.
+    if (numericCols.length <= 1) {
+      return { xKey: null, ySeries: numericCols, xIsDate: false };
     }
+    // 2+ numeric columns → use the first as the X axis.
+    x = numericCols[0];
   }
-  if (!x) x = result.columns[0];
-  const ySeries = result.columns.filter(
-    (c) => c !== x && isNumeric(sample[c])
-  );
+
+  const ySeries = numericCols.filter((c) => c !== x);
   return { xKey: x, ySeries, xIsDate };
 }
 

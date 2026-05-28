@@ -9,7 +9,7 @@ import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 from openpyxl import Workbook
 
@@ -63,6 +63,29 @@ def _write_csv(path: Path, columns: list[str], rows: list[dict[str, Any]]) -> No
         writer.writeheader()
         for row in rows:
             writer.writerow({c: _csv_cell(row.get(c)) for c in columns})
+
+
+def export_csv_streaming(
+    columns: list[str],
+    row_iter: Iterable[dict[str, Any]],
+    filename_hint: str = "query_result",
+    output_dir: Path | None = None,
+) -> tuple[Path, int]:
+    """Write a CSV from a row iterator without buffering all rows in memory.
+
+    Returns (path, row_count). Pair with db.stream_select for unlimited exports.
+    """
+    out_dir = output_dir or default_output_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / safe_filename(filename_hint, "csv")
+    count = 0
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        for row in row_iter:
+            writer.writerow({c: _csv_cell(row.get(c)) for c in columns})
+            count += 1
+    return path, count
 
 
 def _csv_cell(value: Any) -> Any:

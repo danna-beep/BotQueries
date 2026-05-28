@@ -206,7 +206,7 @@ export default function App() {
         </div>
       )}
 
-      <nav className="flex items-center gap-1 px-4 pt-2 border-b border-border bg-surface/30">
+      <nav className="flex items-center gap-1 px-4 pt-2 border-b border-border bg-surface">
         {[
           { id: "workspace", label: "Workspace", icon: Workflow },
           { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },

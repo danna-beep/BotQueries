@@ -30,6 +30,7 @@ from .services import (
     describe_table,
     execute_query,
     export_query,
+    export_query_csv_unlimited,
     get_enriched_context_cached,
     get_full_schema,
     invalidate_enriched_cache,
@@ -421,7 +422,22 @@ class ExportRequest(BaseModel):
 @app.post("/api/export")
 def export(req: ExportRequest) -> dict[str, Any]:
     try:
-        path, result = export_query(_cfg(), req.sql, req.format, req.filename, max_rows=req.max_rows)
+        cfg = _cfg()
+        # CSV downloads stream with NO row cap. xlsx/json stay bounded because
+        # they must hold the full dataset in memory to build the file.
+        if req.format == "csv":
+            import time as _time
+
+            start = _time.perf_counter()
+            path, count = export_query_csv_unlimited(cfg, req.sql, req.filename)
+            return {
+                "filename": path.name,
+                "format": "csv",
+                "row_count": count,
+                "elapsed_ms": int((_time.perf_counter() - start) * 1000),
+                "download_url": f"/api/download/{path.name}",
+            }
+        path, result = export_query(cfg, req.sql, req.format, req.filename, max_rows=req.max_rows)
         return {
             "filename": path.name,
             "format": req.format,

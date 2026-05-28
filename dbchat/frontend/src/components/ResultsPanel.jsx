@@ -15,7 +15,7 @@ import {
   downloadUrl,
   runQuery,
 } from "../lib/api.js";
-import { cn, formatNumber } from "../lib/utils.js";
+import { cn, formatNumber, suggestFilename } from "../lib/utils.js";
 import {
   Chart,
   classifyColumns,
@@ -429,19 +429,33 @@ export default function ResultsPanel({ result, onResult }) {
   const [exportInfo, setExportInfo] = useState(null);
   const [exportErr, setExportErr] = useState(null);
   const [copied, setCopied] = useState(false);
+  // Pending export: { fmt } while the user edits the filename before downloading.
+  const [pendingFmt, setPendingFmt] = useState(null);
+  const [exportName, setExportName] = useState("");
 
   useEffect(() => {
     setExportInfo(null);
     setExportErr(null);
+    setPendingFmt(null);
   }, [result?.sql]);
 
-  const handleExport = async (fmt) => {
-    if (!result?.sql) return;
+  const openExport = (fmt) => {
+    setExportInfo(null);
+    setExportErr(null);
+    setExportName(suggestFilename(result?.sql));
+    setPendingFmt(fmt);
+  };
+
+  const handleExport = async () => {
+    if (!result?.sql || !pendingFmt) return;
+    const fmt = pendingFmt;
+    const name = (exportName || "consulta").trim() || "consulta";
     setExporting(fmt);
     setExportErr(null);
     try {
-      const r = await exportQuery(result.sql, fmt, "query_result");
+      const r = await exportQuery(result.sql, fmt, name);
       setExportInfo(r);
+      setPendingFmt(null);
     } catch (e) {
       setExportErr(e.message);
     } finally {
@@ -497,36 +511,36 @@ export default function ResultsPanel({ result, onResult }) {
             )}
             <div className="w-px h-4 bg-border mx-1" />
             <button
-              onClick={() => handleExport("csv")}
+              onClick={() => openExport("csv")}
               disabled={!!exporting}
-              className="btn"
-              title="Export CSV"
+              className={cn("btn", pendingFmt === "csv" && "btn-primary")}
+              title="Descargar CSV (sin límite de filas)"
             >
               <FileDown size={11} />
-              {exporting === "csv" ? "…" : "csv"}
+              csv
             </button>
             <button
-              onClick={() => handleExport("xlsx")}
+              onClick={() => openExport("xlsx")}
               disabled={!!exporting}
-              className="btn"
-              title="Export Excel"
+              className={cn("btn", pendingFmt === "xlsx" && "btn-primary")}
+              title="Descargar Excel"
             >
               <FileDown size={11} />
-              {exporting === "xlsx" ? "…" : "xlsx"}
+              xlsx
             </button>
             <button
-              onClick={() => handleExport("json")}
+              onClick={() => openExport("json")}
               disabled={!!exporting}
-              className="btn"
-              title="Export JSON"
+              className={cn("btn", pendingFmt === "json" && "btn-primary")}
+              title="Descargar JSON"
             >
               <FileDown size={11} />
-              {exporting === "json" ? "…" : "json"}
+              json
             </button>
             <button
               onClick={copySql}
               className="btn h-7 w-7 justify-center !p-0"
-              title="Copy SQL"
+              title="Copiar SQL"
             >
               {copied ? (
                 <Check size={11} className="text-accent" />
@@ -538,11 +552,54 @@ export default function ResultsPanel({ result, onResult }) {
         )}
       </div>
 
+      {pendingFmt && (
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface2/60 animate-slide-up">
+          <FileDown size={13} className="text-accent" />
+          <span className="text-[11px] text-muted whitespace-nowrap">
+            Nombre del archivo:
+          </span>
+          <input
+            autoFocus
+            value={exportName}
+            onChange={(e) => setExportName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleExport();
+              else if (e.key === "Escape") setPendingFmt(null);
+            }}
+            className="flex-1 min-w-0 px-2.5 py-1 rounded-md bg-bg border border-accent/40 text-[12.5px] focus:border-accent/70 outline-none"
+          />
+          <span className="text-[12px] font-mono text-muted">.{pendingFmt}</span>
+          <button
+            onClick={handleExport}
+            disabled={!!exporting}
+            className="btn-primary"
+          >
+            {exporting ? (
+              <>
+                <span className="animate-pulse">descargando…</span>
+              </>
+            ) : (
+              <>
+                <FileDown size={11} strokeWidth={2} /> descargar
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => setPendingFmt(null)}
+            disabled={!!exporting}
+            className="btn h-7 w-7 justify-center !p-0"
+            title="Cancelar"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       {exportInfo && (
         <div className="flex items-center gap-3 px-3 py-2 border-b border-border bg-accent/10 text-accent animate-slide-up">
           <Check size={13} />
           <span className="text-xs font-mono">
-            exported {formatNumber(exportInfo.row_count)} rows ·{" "}
+            {formatNumber(exportInfo.row_count)} filas ·{" "}
             {exportInfo.filename}
           </span>
           <a
@@ -551,7 +608,7 @@ export default function ResultsPanel({ result, onResult }) {
             download
           >
             <FileDown size={11} />
-            download
+            descargar
           </a>
           <button
             onClick={() => setExportInfo(null)}
