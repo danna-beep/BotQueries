@@ -3,26 +3,8 @@
 > **Propósito**: Este documento describe la lógica de conciliación de pagos para todos los borrowers/clientes activos en el repositorio `master-servicer-apps`. Está pensado para alimentar un chatbot que diagnostique por qué un pago específico no se concilió, qué errores ocurrieron en una corrida, y cómo resolverlos.
 
 > **Fecha de generación**: 2026-05-28
-> **Repositorio**: `master-servicer-apps`
-
----
-
-## ⚠️ Mapeo a columnas reales del schema (LEER ANTES DE ESCRIBIR SQL)
-
-Este documento describe la **lógica de negocio** y usa nombres conceptuales (e.g. `PT.owner`) que **NO siempre coinciden con los nombres reales de columnas en MySQL**. Antes de escribir cualquier query, valida en `<database_schema>` cómo se llama realmente la columna. Tabla de equivalencias conocidas:
-
-| Concepto en este .md | Columna real en MySQL |
-|---|---|
-| `PT.owner` / `pt.owner` (string con el dueño) | `payment_tape.owner_name` |
-| `PT.owner` (ID numérico) | `payment_tape.owner_id` |
-| `pt.payment_id` | `payment_tape.payment_id` (existe tal cual) |
-| `pt.gateway_payment_id` | `payment_tape.gateway_payment_id` (existe tal cual) |
-| `pt.borrower_payment_id` | `payment_tape.borrower_payment_id` (existe tal cual) |
-| `pt.extra_data.other_columns.transfer_amount` (Niko bank) | `JSON_EXTRACT(payment_tape.extra_data, '$.other_columns.transfer_amount')` |
-| `ft.provider_extra_data.aux_var_string_1` (Vemo) | `JSON_EXTRACT(funds_transfers.provider_extra_data, '$.aux_var_string_1')` |
-| Ownership API (`get_atom_owners`) | API externa — NO existe como tabla SQL; usa `payment_tape.owner_name` como proxy |
-
-**Regla dura**: si una columna mencionada en este .md no aparece literalmente en `<database_schema>`, busca el equivalente en la tabla de arriba o en columnas de nombre similar. Nunca asumas que el nombre del .md es el nombre real.
+> **Repositorios**: `master-servicer-apps` (lógica Python de conciliación) + `master-trust-servicer-api` (Kotlin — llaves de conciliación, modos por borrower, condiciones de conciliado)
+> **Fuente de verdad de llaves de conciliación**: `master-trust-servicer-api` (prioridad sobre `master-servicer-apps` cuando hay discrepancia)
 
 ---
 
@@ -80,16 +62,48 @@ Banco/borrower envía archivo → file_parsing → payment_tape (PT)
 
 ---
 
-## 2. Tipos de conciliación (enum `Type`)
+## 2. Tipos de conciliación (enum `ConciliationType`)
 
-| Tipo | Cruza | Cuándo aplica |
-|------|-------|---------------|
-| `PAYMENTS___VS___PAYMENT_TAPE` | `payments` ↔ `payment_tape` | Gateway-mediated (la mayoría de clientes) |
-| `PAYMENTS___VS___FUNDS_TRANSFERS` | `payments` ↔ `funds_transfers` | Validación contra extracto bancario |
-| `PAYMENTS___VS___BANK` | `payments` ↔ extracto bancario | ADDI, SOMOS, PAYJOY, SISTECREDITO, WELLI, YUPPI, DELTACREDIT, CREDIORBE |
-| `PAYMENTS___VS___BORROWER_DB` (alias `PAYMENTS___VS___DISBURSEMENTS`) | `payments` ↔ sistema interno del borrower | ADDI principalmente |
-| `DISBURSEMENTS___VS___FUNDS_TRANSFERS` | payouts agregados ↔ extracto | Stripe (Niko) |
-| `PAYMENT_TAPE___VS___BANK` | `payment_tape` ↔ `funds_transfers` (sin Payment) | Transferencia bancaria directa (Niko BBVA/ACTINVER) |
+> **Fuente**: `master-trust-servicer-api/core/conciliation/Model.kt` (Kotlin — fuente de verdad del enum y persistence codes)
+
+| Enum Kotlin | `persistence_code` en DB | Cruza | Cuándo aplica |
+|-------------|--------------------------|-------|---------------|
+| `PAYMENTS_VS_BORROWERS_CORE` | `PAYMENTS___VS___BORROWER_DB` | `payments` ↔ `borrower_payments` (sistema interno del borrower) | ADDI principalmente. Condición: `p.borrower_db_payment_id IS NOT NULL` |
+| `BORROWERS_CORE_VS_PAYMENTS` | `PAYMENTS___VS___BORROWER_DB` | Inverso: `borrower_payments` ↔ `payments` | Mismo persistence code que el anterior. Condición: `bp.payments_conciliation_id IS NOT NULL` |
+| `PAYMENTS_VS_PAYMENT_TAPE` | `PAYMENTS___VS___PAYMENT_TAPE` | `payments` ↔ `payment_tape` | Gateway-mediated (la mayoría de clientes). Condición: `p.payment_tape_conciliation_id IS NOT NULL` |
+| `PAYMENT_TAPE_VS_PAYMENTS` | `PAYMENTS___VS___PAYMENT_TAPE` | Inverso: `payment_tape` ↔ `payments` | Mismo persistence code. Condición: `pt.payment_id IS NOT NULL` |
+| `PAYMENTS_VS_BANK` | `PAYMENTS___VS___BANK` | `payments` ↔ `funds_transfers` o `disbursements` según gateway | ADDI, SOMOS, PAYJOY, SISTECREDITO, WELLI, YUPPI, DELTACREDIT, CREDIORBE. Ver lógica de `hasDisbursements` abajo. |
+| `DISBURSEMENTS_VS_PAYMENTS` | — | `disbursements` ↔ `payments` | Condición: todos los `disbursements_payments.conciliation_id IS NOT NULL` para ese disbursement |
+| `DISBURSEMENTS_VS_FUNDS_TRANSFERS` | — | `disbursements` ↔ `funds_transfers` | Stripe/Niko. Condición: `d.fund_transfer_id IS NOT NULL` |
+| `PAYMENT_TAPE_VS_BANK` | — | `payment_tape` ↔ `funds_transfers` (sin Payment registrado) | Niko BBVA/ACTINVER — transferencia bancaria directa sin gateway |
+
+> **Nota importante** (del código): `PAYMENTS_VS_BORROWERS_CORE` y `BORROWERS_CORE_VS_PAYMENTS` comparten el mismo `persistence_code = "PAYMENTS___VS___BORROWER_DB"` en la base de datos. Lo mismo ocurre con `PAYMENTS_VS_PAYMENT_TAPE` y `PAYMENT_TAPE_VS_PAYMENTS`. El índice MySQL usado cambia según la dirección de la conciliación:
+> - `PAYMENTS_VS_BORROWERS_CORE` → `FORCE INDEX (idx_multi_payments_borrowerscore_by_prov_approved_date)`
+> - `PAYMENTS_VS_PAYMENT_TAPE` → `FORCE INDEX (idx_multi_payments_paymenttape_by_prov_approved_date)`
+> - `PAYMENTS_VS_BANK` → `FORCE INDEX (idx_multi_payments_bank_by_prov_approved_date)`
+
+### Lógica `hasDisbursements` — cuándo se concilia vía `fund_transfer_id` directo vs vía `disbursement`
+
+> **Fuente**: `master-trust-servicer-api/infra/repository/utils/conciliation/ConciliationRepositoryHelper.kt`
+
+Para `PAYMENTS_VS_BANK`, la condición de "conciliado" depende de si el **gateway tiene disbursements** (agrupador intermedio como Stripe/Wompi payouts) o no:
+
+```
+GatewayConfig.hasDisbursements = true  → conciliado si d.fund_transfer_id IS NOT NULL
+                                         (JOIN: payments → disbursements → fund_transfers)
+
+GatewayConfig.hasDisbursements = false → conciliado si p.fund_transfer_id IS NOT NULL
+                                         (conciliación directa payment → fund_transfer)
+```
+
+Cuando un borrower tiene **mezcla de gateways** (algunos con disbursements, otros sin), se genera un `CASE WHEN` dinámico:
+```sql
+CASE
+  WHEN p.payment_gateway_code IN ('NEQUI', 'DRUO', ...)
+  THEN p.fund_transfer_id IS NOT NULL
+  ELSE d.fund_transfer_id IS NOT NULL
+END
+```
 
 ### Status de una `Conciliation`
 - `PENDING`
@@ -114,10 +128,14 @@ Pagos registrados por VAAS vía gateway.
 | `payment_gateway_code` | STRIPE, BBVA, ACTINVER, EFECTY, PSE, WOMPI, BANCOLOMBIA_TRANSFER, ... |
 | `status` | APPROVED / PENDING / REJECTED |
 | `approved_date` | Fecha de aprobación del gateway |
-| `payment_tape_conciliation_id` | NULL = no conciliado contra PT |
-| `fund_transfer_conciliation_id` | NULL = no conciliado contra banco |
-| `disbursement_conciliation_id` | NULL = no conciliado contra payout (Stripe) |
-| `borrower_db_conciliation_id` | NULL = no conciliado contra sistema del borrower |
+| `payment_tape_conciliation_id` | NULL = no conciliado contra PT. FK a `conciliations.id`. Condición de conciliado en master-trust-servicer-api: `p.payment_tape_conciliation_id IS NOT NULL` |
+| `fund_transfer_conciliation_id` | NULL = no conciliado contra banco directamente (sin disbursement). Condición: `p.fund_transfer_id IS NOT NULL` |
+| `disbursement_conciliation_id` | NULL = no conciliado contra payout (Stripe). FK a `conciliations.id` |
+| `borrower_db_conciliation_id` | NULL = no conciliado contra sistema del borrower. Condición: `p.borrower_db_payment_id IS NOT NULL` |
+| `borrower_db_payment_id` | ID en el sistema del borrower. **Unique constraint** en DB. Si NOT NULL → conciliado contra borrower core (`PAYMENTS_VS_BORROWERS_CORE`) |
+| `disbursement_id` | FK a `disbursements.id`. Si NOT NULL y `disbursements.fund_transfer_id IS NOT NULL` → conciliado contra banco vía disbursement (`hasDisbursements=true`) |
+| `fund_transfer_id` | FK a `funds_transfers.id`. Si NOT NULL → conciliado directamente contra banco (`hasDisbursements=false`) |
+| `disbursement_reference_code` | `txn_...` de Stripe — usado para match en `disbursements_payments` |
 | `provider_extra_information` | JSON con `reference`, `order_id`, etc. |
 | `contract_id` | Contrato del deudor |
 
@@ -155,6 +173,43 @@ Movimientos reales del extracto bancario.
 ### `payments_db.disbursements` y `disbursements_payments` (Stripe)
 - `disbursements`: payouts de Stripe (`po_...`) que agrupan múltiples transacciones individuales.
 - `disbursements_payments`: transacciones individuales (`txn_...`) dentro de cada payout. Sus amounts vienen **negativos**.
+
+### `payments_db.conciliations`
+> **Fuente**: `master-trust-servicer-api/.claude/skills/ops.triage/references/table-schema.md`
+
+Registro de cada ejecución de conciliación.
+
+| Columna | Tipo | Uso |
+|---------|------|-----|
+| `id` | BIGINT PK | FK desde `payment_tape_conciliation_id`, `fund_transfer_conciliation_id`, `disbursement_conciliation_id`, `borrower_db_conciliation_id` en `payments` |
+| `type` | VARCHAR | Persistence code del `ConciliationType` (ej: `PAYMENTS___VS___PAYMENT_TAPE`) |
+| `from_date` | DATE | Inicio del rango de fechas del proceso |
+| `until_date` | DATE | Fin del rango de fechas |
+| `status` | VARCHAR | `PENDING`, `SUCCESS`, `INTERRUPTED`, `ERROR` |
+| `result_checks_context` | JSON | Contexto de checks del resultado |
+| `result_checks_description` | TEXT | Descripción legible del resultado |
+
+### `payments_db.disbursements`
+| Columna | Tipo | Uso |
+|---------|------|-----|
+| `id` | VARCHAR(36) UUID | FK desde `payments.disbursement_id` |
+| `borrower_code` | VARCHAR | Borrower |
+| `payment_gateway_code` | VARCHAR | Gateway (STRIPE, WOMPI, etc.) |
+| `total_gross_amount` | DECIMAL | Monto bruto del payout |
+| `total_net_amount` | DECIMAL | Monto neto |
+| `total_fee_amount` | DECIMAL | Comisión |
+| `report_date` | DATE | Fecha del reporte (usada para match con `funds_transfers.date`) |
+| `status` | VARCHAR | Estado del disbursement |
+| `fund_transfer_id` | CHAR(36) | Si NOT NULL → disbursement conciliado contra extracto bancario |
+| `fund_transfer_conciliation_id` | BIGINT | FK a `conciliations.id` para la conciliación del FT |
+
+### `payments_db.borrower_payments` (sistema interno del borrower)
+Tabla del lado del borrower que se cruza en `PAYMENTS_VS_BORROWERS_CORE`.
+
+| Columna | Uso |
+|---------|-----|
+| `id` | PK — match contra `payments.borrower_db_payment_id` |
+| `payments_conciliation_id` | Si NOT NULL → conciliado contra `payments`. Condición `BORROWERS_CORE_VS_PAYMENTS`: `bp.payments_conciliation_id IS NOT NULL` |
 
 ### Ownership API
 ```python
@@ -1116,7 +1171,7 @@ WHERE id = :payment_id;
 ### 8.2. PT asociado a un payment
 ```sql
 SELECT pt.id AS pt_id, pt.gateway_payment_id, pt.gateway_code, pt.total_payment,
-       pt.payment_date, pt.owner_name, pt.status, pt.payment_id, pt.borrower_payment_id,
+       pt.payment_date, pt.owner, pt.status, pt.payment_id, pt.borrower_payment_id,
        pt.borrower_contract_id
 FROM payments_db.payment_tape pt
 WHERE pt.gateway_payment_id = (
@@ -1137,7 +1192,7 @@ ORDER BY approved_date DESC;
 ### 8.4. PT rechazados con info de diagnóstico
 ```sql
 SELECT pt.id, pt.gateway_payment_id, pt.gateway_code, pt.total_payment,
-       pt.payment_date, pt.owner_name, p.id AS payment_exists, p.amount AS payment_amount,
+       pt.payment_date, pt.owner, p.id AS payment_exists, p.amount AS payment_amount,
        ABS(pt.total_payment - p.amount) AS amount_diff, pt.status
 FROM payment_tape pt
 LEFT JOIN payments p ON pt.gateway_payment_id = p.provider_id
@@ -1204,25 +1259,25 @@ ownership_client.get_atom_owners(contract_ids=[<contract_id>], company_id=<borro
 
 ## 9. Tabla resumen comparativa de todos los clientes
 
-| Cliente | Arquitectura | País | Llave primaria | Tolerancia amt | Unreconciled HALT | Concilia vs Banco | Ownership Check | application_check | Special |
-|---------|--------------|------|----------------|----------------|-------------------|-------------------|-----------------|-------------------|---------|
-| INKLUSIVA | Scrappy | CO | Por gateway (Bcol composite, Efecty composite, PSE/Wompi simple) | < 0.1 | 10% por count | NO | NO | SI (< 1.1) | account_sweep |
-| COOGRANCOLOMBIANA | Scrappy | CO | Idem Inklusiva (subset) | < 0.1 | No HALT (email CSV) | NO | NO | NO | Insert como INKLUSIVA |
-| EQUITY_LINK | Scrappy | MX | `gateway_payment_id` (sin prefijo `sitb2`) | < 1 | No HALT (XLSX email) | NO | NO (fiso) | NO | try/except Roam |
-| EXITUS | Scrappy | MX | `gateway_payment_id` (sin sufijo `-N`) | < 1 | 0% (HALT) | NO (forzado True) | SI | NO | — |
-| HILCO_ARRENDAMIENTOPRODUCTIVO | Scrappy | MX | `borrower_payment_id` ↔ `payment.provider_extra_information.reference` | < 1 | 0% (HALT) | NO | SI | NO | Blacklist S3 diaria |
-| NIKO | Scrappy | MX | Stripe: `pi_...`; Banco: `(account, date, transfer_amount)` | < 1 MXN | 10% por **monto** | SI (Stripe vía disb; banco directo) | NO | NO | Stripe en centavos, 3-layer match |
-| VEMO | Scrappy | MX | `borrower_payment_id` ↔ `payment.provider_extra_information.reference` | < 1 | 0% (HALT) | SI (date + aux_var_string_1) | SI (3 maestros) | NO | — |
-| SOLVE | Scrappy (CSV) | — | `transfer_id` ↔ `payment_reference` | < 0.1 | No HALT (log) | — | NO | NO | Ad-hoc CSV |
-| ADDI | Entrypoint | CO | Por gateway (Bcol Corr, Wompi, DRUO, PSE) | <= 1 | — | SI | — | — | borrower_db extra |
-| ADDI_BNPN | Entrypoint | CO | Solo PSE | <= 1 | — | SI | — | — | — |
-| WELLI | Entrypoint (special) | CO | Wompi: `order_id` (PSE: `provider_id`); Bcol Corr: `amount+date+gateway` | exact eq | — | SI | — | — | Lógica custom inline |
-| SOMOS | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion |
-| PAYJOY | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion |
-| SISTECREDITO | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | EFECTY + GANA |
-| CREDIORBE | Entrypoint | CO | Genérico (SP) + match amount+reference en bank | <= 1 | — | SI | — | — | `_last_three_months` window |
-| DELTACREDIT | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion |
-| YUPPI | Entrypoint | — | Genérico | <= 1 | — | SI | — | — | DRUO/Bcol_collect/NEQUI |
+| Cliente | Arquitectura | País | Llave primaria | Tolerancia amt | Unreconciled HALT | Concilia vs Banco | Ownership Check | application_check | Special | `borrowers-core` (MTS) | `payment-tape` (MTS) | `bank` (MTS) |
+|---------|--------------|------|----------------|----------------|-------------------|-------------------|-----------------|-------------------|---------|------------------------|----------------------|--------------|
+| INKLUSIVA | Scrappy | CO | Por gateway (Bcol composite, Efecty composite, PSE/Wompi simple) | < 0.1 | 10% por count | NO | NO | SI (< 1.1) | account_sweep | ✅ | ✅ | ❌ |
+| COOGRANCOLOMBIANA | Scrappy | CO | Idem Inklusiva (subset) | < 0.1 | No HALT (email CSV) | NO | NO | NO | Insert como INKLUSIVA | ✅ | ✅ | ❌ |
+| EQUITY_LINK | Scrappy | MX | `gateway_payment_id` (sin prefijo `sitb2`) | < 1 | No HALT (XLSX email) | NO | NO (fiso) | NO | try/except Roam | ✅ | ✅ | ❌ |
+| EXITUS | Scrappy | MX | `gateway_payment_id` (sin sufijo `-N`) | < 1 | 0% (HALT) | NO (forzado True) | SI | NO | — | ✅ | ✅ | ❌ |
+| HILCO_ARRENDAMIENTOPRODUCTIVO | Scrappy | MX | `borrower_payment_id` ↔ `payment.provider_extra_information.reference` | < 1 | 0% (HALT) | NO | SI | NO | Blacklist S3 diaria | ✅ | ✅ | ❌ |
+| NIKO | Scrappy | MX | Stripe: `pi_...`; Banco: `(account, date, transfer_amount)` | < 1 MXN | 10% por **monto** | SI (Stripe vía disb; banco directo) | NO | NO | Stripe en centavos, 3-layer match | ✅ | ✅ | ✅ |
+| VEMO | Scrappy | MX | `borrower_payment_id` ↔ `payment.provider_extra_information.reference` | < 1 | 0% (HALT) | SI (date + aux_var_string_1) | SI (3 maestros) | NO | — | ✅ | ✅ | ✅ |
+| SOLVE | Scrappy (CSV) | — | `transfer_id` ↔ `payment_reference` | < 0.1 | No HALT (log) | — | NO | NO | Ad-hoc CSV | ✅ | ✅ | ❌ |
+| ADDI | Entrypoint | CO | Por gateway (Bcol Corr, Wompi, DRUO, PSE) | <= 1 | — | SI | — | — | borrower_db extra | ✅ enabled | ✅ enabled | ❌ disabled |
+| ADDI_BNPN | Entrypoint | CO | Solo PSE | <= 1 | — | SI | — | — | — | ✅ | ✅ | ❌ |
+| WELLI | Entrypoint (special) | CO | Wompi: `order_id` (PSE: `provider_id`); Bcol Corr: `amount+date+gateway` | exact eq | — | SI | — | — | Lógica custom inline | ✅ | ✅ | ✅ |
+| SOMOS | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion | ✅ | ✅ | ✅ |
+| PAYJOY | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion | ✅ | ✅ | ✅ |
+| SISTECREDITO | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | EFECTY + GANA | ✅ | ✅ | ✅ |
+| CREDIORBE | Entrypoint | CO | Genérico (SP) + match amount+reference en bank | <= 1 | — | SI | — | — | `_last_three_months` window | ✅ | ✅ | ✅ |
+| DELTACREDIT | Entrypoint | CO | Genérico (SP) | <= 1 | — | SI | — | — | WOMPI expansion | ✅ | ✅ | ✅ |
+| YUPPI | Entrypoint | — | Genérico | <= 1 | — | SI | — | — | DRUO/Bcol_collect/NEQUI | ✅ | ✅ | ✅ (desde 2025-01-01) |
 
 ---
 
@@ -1270,3 +1325,152 @@ ownership_client.get_atom_owners(contract_ids=[<contract_id>], company_id=<borro
    - **Barrido** = proceso de Inklusiva que sintetiza PT para pagos viejos no conciliados.
    - **Disbursement** = payout agregado de Stripe.
    - **Punto de no retorno** = en el código de Scrappy, marca donde empieza la persistencia (después de validaciones).
+
+---
+
+## 11. Configuración de conciliación por borrower — `master-trust-servicer-api`
+
+> **Fuente**: `master-trust-servicer-api/src/main/resources/business.yml` + `business-stg.yml`
+> Esta sección documenta los modos de conciliación activos por borrower **según el Payments Hub** (master-trust-servicer-api). La lógica de ejecución está en `master-servicer-apps` (sección 5), pero las **condiciones de "conciliado"** y los **índices MySQL** que usa Payments Hub para mostrar métricas vienen de aquí.
+
+### 11.1 Modos habilitados por borrower (PROD)
+
+| Borrower | `borrowers-core` | `payment-tape` | `bank` | `bank.start-date` | Observaciones |
+|----------|-----------------|----------------|--------|-------------------|---------------|
+| **YUPPI** | ✅ enabled | ✅ enabled | ✅ enabled | 2025-01-01T00:00:00-05:00 | Demo user. Gateways: NEQUI, DRUO, BANCOLOMBIA_COLLECT |
+| **ADDI** | ✅ enabled | ✅ enabled | ❌ disabled | — | borrowers-core = concilia vs sistema ADDI. bank_conciliation_required: false en distribución |
+| **WELLI** | ✅ enabled | ✅ enabled | ✅ enabled | — | Gateways: BANCOLOMBIA_CORRESPONDENT, PSE, BANCOLOMBIA_TRANSFER, DAVIPLATA, NEQUI |
+| **CREDIORBE** | ✅ enabled | ✅ enabled | ✅ enabled | — | Gateways: BANCOLOMBIA, DAVIVIENDA, BANCO_BOGOTA, PSE |
+| **DELTACREDIT** | ✅ enabled | ✅ enabled | ✅ enabled | — | Gateways: BANCOLOMBIA, BANCOLOMBIA_CORRESPONDENT, NEQUI, PSE, WOMPI |
+| **SISTECREDITO** | ✅ enabled | ✅ enabled | ✅ enabled | — | Gateways: EFECTY, GANA |
+| **SOLVENTO** | ✅ enabled | ✅ enabled | — | — | — |
+| Otros (WIMO, BIA, FINKARGO, etc.) | Según config | Según config | Según config | — | Ver business.yml |
+
+### 11.2 Diferencias STG vs PROD
+
+> **Fuente**: `business-stg.yml` sobrescribe `business.yml`
+
+| Modo | PROD | STG |
+|------|------|-----|
+| `borrowers-core` | ✅ enabled | ✅ enabled |
+| `payment-tape` | ✅ enabled | ❌ **disabled** |
+| `bank` | ✅ enabled (desde 2025-01-01) | No configurado / diferente |
+
+**Implicación**: En STG, `Payments Hub` solo muestra métricas de conciliación `borrowers-core`. Los payments que en PROD figurarían como conciliados via `payment-tape` o `bank` aparecerán como **no conciliados** en STG.
+
+### 11.3 Estructura de `GatewayConfig` (por borrower + gateway en business.yml)
+
+```yaml
+borrower:
+  YUPPI:
+    gateways:
+      NEQUI:
+        enabled: true
+        has-disbursements: false          # → concilia via p.fund_transfer_id directamente
+        bank-concepts:
+          - NEQUI_CONCEPT_CODE
+      DRUO:
+        enabled: true
+        has-disbursements: false
+      BANCOLOMBIA_COLLECT:
+        enabled: true
+        has-disbursements: false
+        deprecated-date: null             # null = activo
+```
+
+**Campos clave de `GatewayConfig`**:
+
+| Campo | Tipo | Efecto en conciliación |
+|-------|------|------------------------|
+| `enabled` | Boolean (default: true) | Si false, el gateway se ignora en las queries de métricas |
+| `has-disbursements` | Boolean (default: true) | Si true: conciliado = `d.fund_transfer_id IS NOT NULL` (vía disbursement). Si false: conciliado = `p.fund_transfer_id IS NOT NULL` (directo) |
+| `deprecated-date` | OffsetDateTime? | Si NOT NULL y fecha < referenceDate: gateway se excluye de los activos |
+| `bank-concepts` | Set<BankConcept> | Conceptos bancarios que mapean a este gateway en el extracto |
+
+### 11.4 Condiciones exactas de "conciliado" por tipo (código fuente)
+
+> **Fuente**: `ConciliationRepositoryHelper.kt`
+
+```kotlin
+// PAYMENTS_VS_BORROWERS_CORE
+reconciled:   "p.borrower_db_payment_id IS NOT NULL"
+unreconciled: "p.borrower_db_payment_id IS NULL"
+
+// BORROWERS_CORE_VS_PAYMENTS
+reconciled:   "bp.payments_conciliation_id IS NOT NULL"
+unreconciled: "bp.payments_conciliation_id IS NULL"
+
+// PAYMENTS_VS_PAYMENT_TAPE
+reconciled:   "p.payment_tape_conciliation_id IS NOT NULL"
+unreconciled: "p.payment_tape_conciliation_id IS NULL"
+
+// PAYMENT_TAPE_VS_PAYMENTS
+reconciled:   "pt.payment_id IS NOT NULL"
+unreconciled: "pt.payment_id IS NULL"
+
+// DISBURSEMENTS_VS_PAYMENTS (todos los disbursements_payments conciliados)
+reconciled:   "NOT EXISTS (SELECT 1 FROM disbursements_payments dp WHERE dp.disbursement_id = d.id AND dp.conciliation_id IS NULL)"
+unreconciled: "EXISTS (SELECT 1 FROM disbursements_payments dp WHERE dp.disbursement_id = d.id AND dp.conciliation_id IS NULL)"
+
+// DISBURSEMENTS_VS_FUNDS_TRANSFERS
+reconciled:   "NOT EXISTS (SELECT 1 FROM disbursements d WHERE d.fund_transfer_id = ft.id)"  [cuando !reconciled]
+unreconciled: opuesto
+
+// PAYMENTS_VS_BANK (gateway sin disbursements, hasDisbursements=false)
+reconciled:   "p.fund_transfer_id IS NOT NULL"
+unreconciled: "p.fund_transfer_id IS NULL"
+
+// PAYMENTS_VS_BANK (gateway con disbursements, hasDisbursements=true)
+reconciled:   "d.fund_transfer_id IS NOT NULL"
+unreconciled: "d.fund_transfer_id IS NULL"
+
+// PAYMENTS_VS_BANK (mezcla — CASE WHEN dinámico)
+reconciled:
+  CASE
+    WHEN p.payment_gateway_code IN (<gateways_sin_disbursements>)
+    THEN p.fund_transfer_id IS NOT NULL
+    ELSE d.fund_transfer_id IS NOT NULL
+  END
+```
+
+### 11.5 Queries de diagnóstico adicionales (Payments Hub)
+
+#### Ver todos los tipos de conciliación para un borrower
+```sql
+SELECT type, status, from_date, until_date, creation_date
+FROM payments_db.conciliations
+WHERE type IN ('PAYMENTS___VS___BORROWER_DB', 'PAYMENTS___VS___PAYMENT_TAPE', 'PAYMENTS___VS___BANK')
+ORDER BY creation_date DESC
+LIMIT 20;
+```
+
+#### Estado de conciliación de un payment (todas las dimensiones)
+```sql
+SELECT
+  p.id,
+  p.borrower_code,
+  p.payment_gateway_code,
+  p.status,
+  -- BORROWERS_CORE
+  CASE WHEN p.borrower_db_payment_id IS NOT NULL THEN 'CONCILIADO' ELSE 'NO' END AS vs_borrower_core,
+  -- PAYMENT_TAPE
+  CASE WHEN p.payment_tape_conciliation_id IS NOT NULL THEN 'CONCILIADO' ELSE 'NO' END AS vs_payment_tape,
+  -- BANK directo (hasDisbursements=false)
+  CASE WHEN p.fund_transfer_id IS NOT NULL THEN 'CONCILIADO' ELSE 'NO' END AS vs_bank_directo,
+  -- BANK vía disbursement (hasDisbursements=true)
+  CASE WHEN p.disbursement_id IS NOT NULL AND d.fund_transfer_id IS NOT NULL THEN 'CONCILIADO' ELSE 'NO' END AS vs_bank_disbursement
+FROM payments_db.payments p
+LEFT JOIN payments_db.disbursements d ON d.id = p.disbursement_id
+WHERE p.id = ':payment_id';
+```
+
+#### Payments conciliados en borrowers-core pero NO en payment-tape
+```sql
+SELECT p.id, p.borrower_code, p.amount, p.approved_date, p.borrower_db_payment_id
+FROM payments_db.payments p
+WHERE p.borrower_code = ':borrower'
+  AND p.borrower_db_payment_id IS NOT NULL
+  AND p.payment_tape_conciliation_id IS NULL
+  AND p.status = 'APPROVED'
+ORDER BY p.approved_date DESC;
+```
