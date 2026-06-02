@@ -1,0 +1,66 @@
+{
+  "navigation": {
+    "home": "Home",
+    "other": "Other",
+    "menu": "Menu",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu",
+    "getStarted": "Get started"
+  },
+  "header": {
+    "language": "Language",
+    "logout": "Log out",
+    "poweredBy": "POWERED BY VAAS"
+  },
+  "employees": {
+    "title": "Employees",
+    "filters": {
+      "searchPlaceholder": "Search by name or position...",
+      "status": "Status",
+      "all": "All",
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "table": {
+      "firstName": "First Name",
+      "lastName": "Last Name",
+      "age": "Age",
+      "position": "Position",
+      "startDate": "Start Date",
+      "endDate": "End Date",
+      "status": "Status",
+      "actions": "Actions",
+      "empty": "No employees found"
+    },
+    "actions": {
+      "create": "New Employee",
+      "edit": "Edit",
+      "delete": "Delete",
+      "download": "Download File"
+    },
+    "form": {
+      "createTitle": "New Employee",
+      "editTitle": "Edit Employee",
+      "cancel": "Cancel",
+      "create": "Create",
+      "save": "Save",
+      "validation": {
+        "required": "This field is required",
+        "ageMin": "Age must be at least 18",
+        "ageMax": "Age must be at most 99",
+        "ageInvalid": "Enter a valid age"
+      }
+    },
+    "delete": {
+      "title": "Delete Employee",
+      "confirm": "Are you sure you want to delete {{name}}? This action cannot be undone."
+    },
+    "toast": {
+      "created": "Employee created successfully",
+      "updated": "Employee updated successfully",
+      "deleted": "Employee deleted successfully",
+      "downloaded": "File downloaded successfully",
+      "error": "An error occurred. Please try again."
+    }
+  }
+}

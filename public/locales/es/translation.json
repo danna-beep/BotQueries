@@ -1,0 +1,66 @@
+{
+  "navigation": {
+    "home": "Inicio",
+    "other": "Otro",
+    "menu": "Menú",
+    "openMenu": "Abrir menú",
+    "closeMenu": "Cerrar menú",
+    "getStarted": "Empezar ahora"
+  },
+  "header": {
+    "language": "Idioma",
+    "logout": "Cerrar sesión",
+    "poweredBy": "POWERED BY VAAS"
+  },
+  "employees": {
+    "title": "Empleados",
+    "filters": {
+      "searchPlaceholder": "Buscar por nombre o puesto...",
+      "status": "Estado",
+      "all": "Todos",
+      "active": "Activo",
+      "inactive": "Inactivo"
+    },
+    "table": {
+      "firstName": "Nombre",
+      "lastName": "Apellido",
+      "age": "Edad",
+      "position": "Puesto",
+      "startDate": "Fecha ingreso",
+      "endDate": "Fecha egreso",
+      "status": "Estado",
+      "actions": "Acciones",
+      "empty": "No se encontraron empleados"
+    },
+    "actions": {
+      "create": "Nuevo Empleado",
+      "edit": "Editar",
+      "delete": "Eliminar",
+      "download": "Descargar Legajo"
+    },
+    "form": {
+      "createTitle": "Nuevo Empleado",
+      "editTitle": "Editar Empleado",
+      "cancel": "Cancelar",
+      "create": "Crear",
+      "save": "Guardar",
+      "validation": {
+        "required": "Este campo es obligatorio",
+        "ageMin": "La edad debe ser al menos 18",
+        "ageMax": "La edad debe ser como máximo 99",
+        "ageInvalid": "Ingresá una edad válida"
+      }
+    },
+    "delete": {
+      "title": "Eliminar Empleado",
+      "confirm": "¿Estás seguro que querés eliminar a {{name}}? Esta acción no se puede deshacer."
+    },
+    "toast": {
+      "created": "Empleado creado exitosamente",
+      "updated": "Empleado actualizado exitosamente",
+      "deleted": "Empleado eliminado exitosamente",
+      "downloaded": "Legajo descargado exitosamente",
+      "error": "Ocurrió un error. Intentá de nuevo."
+    }
+  }
+}
