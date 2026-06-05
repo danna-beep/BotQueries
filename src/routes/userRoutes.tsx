@@ -1,7 +1,11 @@
 // src/routes/userRoutes.tsx
+import { lazy } from 'react'
 import type { RouteObject } from 'react-router-dom'
 import { Layout } from '../components'
-import { Home } from '../views'
+
+const Workspace = lazy(() => import('@/views/Workspace'))
+const Dashboard = lazy(() => import('@/views/Dashboard'))
+const NoCode = lazy(() => import('@/views/NoCode'))
 
 const userRoutes: RouteObject[] = [
   {
@@ -9,11 +13,15 @@ const userRoutes: RouteObject[] = [
     children: [
       {
         index: true,
-        element: <Home />,
+        element: <Workspace />,
       },
       {
-        path: 'other/:id',
-        element: <div>Add other route here and use the id with useParams</div>,
+        path: 'dashboard',
+        element: <Dashboard />,
+      },
+      {
+        path: 'nocode',
+        element: <NoCode />,
       },
       {
         path: '*',

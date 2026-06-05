@@ -25,3 +25,9 @@ build
 *.sln
 *.sw?
 .env
+
+# Backend (Python)
+backend/.venv/
+__pycache__/
+*.py[cod]
+backend/**/__pycache__/

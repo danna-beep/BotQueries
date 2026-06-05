@@ -1,6 +1,6 @@
 # Trustee Portal - Frontend
 
-Aplicación frontend vaas-playground construida con React, TypeScript, Vite y viplay-ui.
+Monorepo de vaas-playground: frontend (React, TypeScript, Vite, viplay-ui) en la raíz y backend (FastAPI/DBChat) en `backend/`.
 
 ## 🚀 Características
 
@@ -18,6 +18,7 @@ Aplicación frontend vaas-playground construida con React, TypeScript, Vite y vi
 
 - **Node.js** 22.x
 - **npm** 9.x+
+- **Python** 3.11+ (para el backend en `backend/`)
 
 ## 🛠️ Instalación y Desarrollo
 
@@ -50,6 +51,51 @@ npm run dev
 ```
 
 La aplicación estará disponible en `http://localhost:5173`
+
+## 🐍 Backend (monorepo)
+
+El backend (FastAPI) vive en `./backend` dentro de este mismo repo. El frontend
+llama a `/api/*`, que en desarrollo Vite proxya a `http://127.0.0.1:8000`
+(ver `vite.config.ts`, override con `DBCHAT_BACKEND_URL`).
+
+### 1. Configurar el backend (una vez)
+
+```bash
+python3 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements.txt
+cp backend/.env.example backend/.env   # luego edita backend/.env
+```
+
+`backend/.env` necesita al menos `ANTHROPIC_API_KEY`. La conexión a MySQL se
+toma de `backend/.env` (`MYSQL_*`, vía `DbConfig.from_env()`) o se configura en
+la UI ("Configurar accesos"), que la persiste en `~/.dbchat/config.json`.
+
+> Para que el backend alcance la base de datos (p. ej. `dbro.app.getvaas.com`)
+> puede que la máquina necesite VPN.
+
+### 2. Correr backend + frontend juntos
+
+```bash
+npm run dev:all      # uvicorn :8000 + Vite :5173 (un solo comando)
+```
+
+O por separado en dos terminales:
+
+```bash
+npm run dev:api      # solo backend (uvicorn :8000)
+npm run dev          # solo frontend (Vite :5173)
+```
+
+### 3. (Opcional) un solo proceso
+
+Compila el front (`npm run build`) y deja que FastAPI sirva el SPA + la API en
+el mismo puerto apuntando `DBCHAT_STATIC_DIR` al directorio de build:
+
+```bash
+npm run build
+DBCHAT_STATIC_DIR="$PWD/build" backend/.venv/bin/uvicorn app.main:app --app-dir backend --port 8000
+# → http://localhost:8000 sirve SPA + /api (single-origin)
+```
 
 ## 🔐 Autenticación
 
@@ -107,25 +153,34 @@ npm run lint:fix
 
 ## 📁 Estructura del Proyecto
 
+Monorepo: frontend en la raíz + backend FastAPI en `backend/`.
+
 ```
-src/
-├── components/          # Componentes reutilizables
-├── hooks/              # Custom hooks
-├── i18n/               # Configuración de internacionalización
-│   ├── locales/        # Archivos de traducción
-│   └── index.ts        # Configuración de i18n
-├── auth/               # Autenticación con Keycloak
-├── routes/             # Configuración de rutas
-├── services/           # Servicios API
-├── views/              # Listado de vistas
-└── App.tsx             # Componente principal
+.
+├── src/                # Frontend (React + Vite)
+│   ├── components/     # Componentes reutilizables
+│   ├── hooks/          # Custom hooks
+│   ├── i18n/           # Internacionalización (locales/ + config)
+│   ├── auth/           # Autenticación con Keycloak
+│   ├── routes/         # Configuración de rutas
+│   ├── services/       # Servicios API (cliente /api)
+│   ├── views/          # Listado de vistas
+│   └── App.tsx         # Componente principal
+├── backend/            # Backend FastAPI (DBChat)
+│   ├── app/            # main.py, agent.py, context/*.md, …
+│   ├── requirements.txt
+│   └── .env.example
+├── scripts/dev.sh      # Levanta backend + frontend juntos
+└── vite.config.ts      # Proxy /api → 127.0.0.1:8000 (dev)
 ```
 
 ## 🔧 Scripts Disponibles
 
 | Script                 | Descripción                   |
 | ---------------------- | ----------------------------- |
-| `npm run dev`          | Servidor de desarrollo        |
+| `npm run dev`          | Servidor de desarrollo (solo frontend) |
+| `npm run dev:all`      | Backend (uvicorn :8000) + frontend (Vite :5173) |
+| `npm run dev:api`      | Solo backend (uvicorn :8000)  |
 | `npm run build`        | Build de producción           |
 | `npm run preview`      | Preview del build             |
 | `npm run lint`         | Ejecutar linter               |

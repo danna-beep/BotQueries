@@ -1,66 +1,274 @@
 {
+  "common": {
+    "underConstruction": "Under construction — completed in a later phase."
+  },
   "navigation": {
-    "home": "Home",
-    "other": "Other",
-    "menu": "Menu",
+    "workspace": "Workspace",
+    "dashboard": "Dashboard",
+    "nocode": "No-Code",
     "openMenu": "Open menu",
+    "menu": "Menu",
     "closeMenu": "Close menu",
     "getStarted": "Get started"
   },
   "header": {
     "language": "Language",
-    "logout": "Log out",
-    "poweredBy": "POWERED BY VAAS"
+    "logout": "Log out"
   },
-  "employees": {
-    "title": "Employees",
-    "filters": {
-      "searchPlaceholder": "Search by name or position...",
-      "status": "Status",
-      "all": "All",
-      "active": "Active",
-      "inactive": "Inactive"
-    },
-    "table": {
-      "firstName": "First Name",
-      "lastName": "Last Name",
-      "age": "Age",
-      "position": "Position",
-      "startDate": "Start Date",
-      "endDate": "End Date",
-      "status": "Status",
-      "actions": "Actions",
-      "empty": "No employees found"
-    },
-    "actions": {
-      "create": "New Employee",
-      "edit": "Edit",
-      "delete": "Delete",
-      "download": "Download File"
-    },
-    "form": {
-      "createTitle": "New Employee",
-      "editTitle": "Edit Employee",
+  "workspace": {
+    "title": "Workspace",
+    "save": {
+      "button": "Save",
+      "title": "Save to dashboard",
+      "chartTitle": "Chart title",
+      "dashboard": "Dashboard",
+      "createNew": "+ Create new dashboard…",
+      "newName": "New dashboard name",
+      "type": "type",
+      "savedTo": "Saved to {{name}}",
       "cancel": "Cancel",
-      "create": "Create",
-      "save": "Save",
-      "validation": {
-        "required": "This field is required",
-        "ageMin": "Age must be at least 18",
-        "ageMax": "Age must be at most 99",
-        "ageInvalid": "Enter a valid age"
+      "save": "Save chart"
+    },
+    "schema": {
+      "title": "Tables",
+      "search": "Search tables, columns…",
+      "loading": "loading schema…",
+      "noMatches": "no matches",
+      "refresh": "Refresh",
+      "tableHint": "Click to expand · double-click for SELECT *"
+    },
+    "history": {
+      "title": "history",
+      "empty": "no queries yet",
+      "rowsMs": "{{rows}} rows · {{ms}}ms"
+    },
+    "results": {
+      "empty": {
+        "title": "Your next query",
+        "hint": "Ask the chat on the right, or write your own SQL in the SQL tab."
+      },
+      "zero": {
+        "title": "0 results",
+        "hint": "The query ran fine, but no rows matched the filters."
+      },
+      "tabs": { "table": "Table", "chart": "Chart", "sql": "SQL", "warnings": "Warnings" },
+      "warningsSoon": "Available in a later phase",
+      "rows": "rows",
+      "truncated": "truncated",
+      "copySql": "Copy SQL"
+    },
+    "export": {
+      "filename": "File name",
+      "exporting": "exporting…",
+      "download": "download",
+      "cancel": "Cancel"
+    },
+    "chart": {
+      "kind": { "bar": "Bars", "line": "Line", "area": "Area", "pie": "Pie", "ring": "Ring", "kpi": "KPI" },
+      "top": "Top",
+      "all": "All",
+      "metric": "Metric",
+      "label": "Label",
+      "xAxis": "Label (X axis)",
+      "metrics": "Metrics",
+      "noData": "No data to chart",
+      "noNumeric": {
+        "title": "No numeric columns",
+        "hint": "Add a SUM / COUNT / AVG to your query to chart it."
+      },
+      "changeLabel": "change the label to see options",
+      "totalRows": "{{count}} rows total"
+    },
+    "sql": {
+      "loadLast": "Load last query",
+      "runHint": "⌘/Ctrl + Enter to run",
+      "running": "Running…",
+      "run": "Run"
+    },
+    "chat": {
+      "title": "Chat",
+      "thinking": "thinking…",
+      "claudeSession": "claude code session",
+      "apiKeySet": "api key set",
+      "envKeySet": "env key set",
+      "setApiKey": "set api key",
+      "configureAccess": "configure access",
+      "save": "save",
+      "storedNote": "stored in your browser only — never sent anywhere except the backend",
+      "emptyTitle": "Talk to your database.",
+      "emptyHint": "Ask in natural language. Claude proposes the SQL; you decide when to run it.",
+      "examplesLabel": "Examples",
+      "placeholder": {
+        "disconnected": "Database disconnected",
+        "noKey": "Set an Anthropic API key to chat",
+        "ready": "Ask your data…"
+      },
+      "send": "Send",
+      "stop": "Stop",
+      "proposedSql": "Proposed SQL",
+      "running": "running…",
+      "done": "done",
+      "run": "run",
+      "rows": "{{count}} rows"
+    }
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "toast": { "error": "Something went wrong", "deleted": "Dashboard deleted" },
+    "selector": {
+      "none": "(no dashboards)",
+      "chartCount": "{{count}} charts",
+      "nameRequired": "Enter a name",
+      "namePlaceholder": "Dashboard name…",
+      "new": "new",
+      "create": "create",
+      "rename": "Rename",
+      "save": "save",
+      "cancel": "cancel",
+      "deleteDashboard": "delete dashboard",
+      "confirmDelete": "Delete dashboard \"{{name}}\" and all its charts?"
+    },
+    "empty": {
+      "first": {
+        "title": "Your first dashboard",
+        "hint": "Create one above to start. Then run a query in the workspace and save it as a chart."
+      },
+      "tiles": {
+        "title": "Empty dashboard",
+        "hint": "Go to the Workspace, run a query, open the Chart tab and hit Save."
       }
     },
-    "delete": {
-      "title": "Delete Employee",
-      "confirm": "Are you sure you want to delete {{name}}? This action cannot be undone."
+    "tile": {
+      "refresh": "Refresh",
+      "delete": "Delete",
+      "confirmDelete": "Delete \"{{title}}\"?"
+    }
+  },
+  "nocode": {
+    "title": "No Code",
+    "subtitle": "direct answers, no SQL or technical jargon",
+    "thinking": "thinking…",
+    "newConversation": "new conversation",
+    "claudeSession": "claude code",
+    "apiKeySet": "api key set",
+    "envKeySet": "env key set",
+    "setApiKey": "set api key",
+    "configureAccess": "configure access",
+    "save": "save",
+    "emptyTitle": "Ask. It answers.",
+    "emptyHint": "No-code mode: investigates your database and returns just the answer — yes/no, a number, or a short explanation.",
+    "examplesLabel": "Examples",
+    "placeholder": {
+      "disconnected": "Database disconnected",
+      "noKey": "Set an API key to chat",
+      "ready": "Ask something simple, e.g. did ADDI reconcile yesterday?"
+    },
+    "send": "Send",
+    "stop": "Stop",
+    "investigating": "investigating…",
+    "investigatingN": "investigating ({{count}} queries)"
+  },
+  "warnings": {
+    "filters": { "all": "all", "issues": "issues", "ok": "ok" },
+    "reload": "Reload",
+    "clearAll": "Clear all",
+    "confirmClear": "Clear the entire warnings history?",
+    "saving": "saving…",
+    "saved": "saved to Warnings",
+    "saveFailed": "could not save",
+    "empty": {
+      "none": {
+        "title": "No warnings yet",
+        "hint": "Ask the chat about reconciliations; findings will appear here."
+      },
+      "filter": { "title": "Nothing in this filter", "hint": "Change the filter to see other records." }
+    },
+    "card": {
+      "tables": "tables",
+      "detail": "detail",
+      "fix": "possible fix",
+      "question": "original question",
+      "queries": "queries run",
+      "delete": "delete"
+    }
+  },
+  "connection": {
+    "banner": {
+      "notConfigured": "You haven't configured your database yet.",
+      "backendUnreachable": "Could not reach the backend. Make sure it's running.",
+      "cannotConnect": "Could not connect to the database",
+      "configureNow": "Configure now",
+      "editConnection": "Edit connection"
+    },
+    "modal": {
+      "title": "Configure access"
+    },
+    "tabs": {
+      "connection": "Connection",
+      "apiKey": "Anthropic key",
+      "usage": "Usage",
+      "glossary": "Glossary",
+      "memory": "Memory"
+    },
+    "apiKey": {
+      "label": "Anthropic API key",
+      "claudeSession": "Using your Claude Code session — no key needed.",
+      "envKeySet": "A backend env key is configured — no key needed.",
+      "storedNote": "Stored in your browser only — never sent anywhere except the backend.",
+      "toggleKey": "Toggle key visibility",
+      "remove": "Remove",
+      "save": "Save"
+    },
+    "usage": {
+      "estimatedCost": "Estimated cost",
+      "model": "Model: {{model}}",
+      "inputTokens": "Input tokens",
+      "outputTokens": "Output tokens",
+      "cacheWriteTokens": "Cache write tokens",
+      "cacheReadTokens": "Cache read tokens",
+      "totalTokens": "Total tokens",
+      "turns": "Chat turns",
+      "priceNote": "Estimated at ${{input}}/1M input · ${{output}}/1M output tokens. List prices; cache reads/writes priced separately.",
+      "reset": "Reset counter"
+    },
+    "form": {
+      "host": "Host",
+      "port": "Port",
+      "user": "User",
+      "password": "Password",
+      "storedPassword": "stored",
+      "togglePassword": "Show or hide password",
+      "database": "Database",
+      "pickDatabase": "Pick a database…",
+      "sslDisabled": "Disable SSL",
+      "disconnect": "Disconnect",
+      "test": "Test",
+      "connect": "Connect"
     },
     "toast": {
-      "created": "Employee created successfully",
-      "updated": "Employee updated successfully",
-      "deleted": "Employee deleted successfully",
-      "downloaded": "File downloaded successfully",
-      "error": "An error occurred. Please try again."
+      "testOk": "Connection OK",
+      "testFailed": "Connection test failed",
+      "dbListFailed": "Could not list databases",
+      "connected": "Connected",
+      "connectFailed": "Could not connect",
+      "disconnected": "Disconnected",
+      "error": "Something went wrong"
+    },
+    "glossary": {
+      "summary": "{{loaded}} terms loaded · {{matched}} match the schema",
+      "uploaded": "{{count}} terms loaded",
+      "uploadFailed": "Could not upload the glossary",
+      "cleared": "Glossary cleared",
+      "csvPlaceholder": "Paste the glossary CSV here (columns: Variable, Definition, …)",
+      "clear": "Clear",
+      "upload": "Upload"
+    },
+    "memory": {
+      "placeholder": "Add a note to include in every query…",
+      "add": "Add",
+      "empty": "No notes yet.",
+      "delete": "Delete note",
+      "addFailed": "Could not add the note"
     }
   }
 }

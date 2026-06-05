@@ -1,66 +1,274 @@
 {
+  "common": {
+    "underConstruction": "En construcción — se completa en una fase posterior."
+  },
   "navigation": {
-    "home": "Inicio",
-    "other": "Otro",
-    "menu": "Menú",
+    "workspace": "Workspace",
+    "dashboard": "Dashboard",
+    "nocode": "No-Code",
     "openMenu": "Abrir menú",
+    "menu": "Menú",
     "closeMenu": "Cerrar menú",
-    "getStarted": "Empezar ahora"
+    "getStarted": "Empezar"
   },
   "header": {
     "language": "Idioma",
-    "logout": "Cerrar sesión",
-    "poweredBy": "POWERED BY VAAS"
+    "logout": "Cerrar sesión"
   },
-  "employees": {
-    "title": "Empleados",
-    "filters": {
-      "searchPlaceholder": "Buscar por nombre o puesto...",
-      "status": "Estado",
-      "all": "Todos",
-      "active": "Activo",
-      "inactive": "Inactivo"
-    },
-    "table": {
-      "firstName": "Nombre",
-      "lastName": "Apellido",
-      "age": "Edad",
-      "position": "Puesto",
-      "startDate": "Fecha ingreso",
-      "endDate": "Fecha egreso",
-      "status": "Estado",
-      "actions": "Acciones",
-      "empty": "No se encontraron empleados"
-    },
-    "actions": {
-      "create": "Nuevo Empleado",
-      "edit": "Editar",
-      "delete": "Eliminar",
-      "download": "Descargar Legajo"
-    },
-    "form": {
-      "createTitle": "Nuevo Empleado",
-      "editTitle": "Editar Empleado",
+  "workspace": {
+    "title": "Workspace",
+    "save": {
+      "button": "Guardar",
+      "title": "Guardar en dashboard",
+      "chartTitle": "Título de la gráfica",
+      "dashboard": "Dashboard",
+      "createNew": "+ Crear nuevo dashboard…",
+      "newName": "Nombre del nuevo dashboard",
+      "type": "tipo",
+      "savedTo": "Guardado en {{name}}",
       "cancel": "Cancelar",
-      "create": "Crear",
-      "save": "Guardar",
-      "validation": {
-        "required": "Este campo es obligatorio",
-        "ageMin": "La edad debe ser al menos 18",
-        "ageMax": "La edad debe ser como máximo 99",
-        "ageInvalid": "Ingresá una edad válida"
+      "save": "Guardar gráfica"
+    },
+    "schema": {
+      "title": "Tablas",
+      "search": "Buscar tablas, columnas…",
+      "loading": "cargando esquema…",
+      "noMatches": "sin coincidencias",
+      "refresh": "Actualizar",
+      "tableHint": "Clic para expandir · doble clic para SELECT *"
+    },
+    "history": {
+      "title": "historial",
+      "empty": "sin consultas aún",
+      "rowsMs": "{{rows}} filas · {{ms}}ms"
+    },
+    "results": {
+      "empty": {
+        "title": "Tu próxima consulta",
+        "hint": "Pregúntale al chat a la derecha, o escribe tu propio SQL en la pestaña SQL."
+      },
+      "zero": {
+        "title": "0 resultados",
+        "hint": "La consulta corrió bien, pero no hay filas que cumplan los filtros."
+      },
+      "tabs": { "table": "Tabla", "chart": "Gráfica", "sql": "SQL", "warnings": "Warnings" },
+      "warningsSoon": "Disponible en una fase posterior",
+      "rows": "filas",
+      "truncated": "truncado",
+      "copySql": "Copiar SQL"
+    },
+    "export": {
+      "filename": "Nombre del archivo",
+      "exporting": "exportando…",
+      "download": "descargar",
+      "cancel": "Cancelar"
+    },
+    "chart": {
+      "kind": { "bar": "Barras", "line": "Línea", "area": "Área", "pie": "Pastel", "ring": "Anillo", "kpi": "KPI" },
+      "top": "Top",
+      "all": "Todos",
+      "metric": "Métrica",
+      "label": "Etiqueta",
+      "xAxis": "Etiqueta (eje X)",
+      "metrics": "Métricas",
+      "noData": "Sin datos para graficar",
+      "noNumeric": {
+        "title": "No hay columnas numéricas",
+        "hint": "Agrega un SUM / COUNT / AVG a tu consulta para graficar."
+      },
+      "changeLabel": "cambia la etiqueta para ver opciones",
+      "totalRows": "{{count}} filas en total"
+    },
+    "sql": {
+      "loadLast": "Cargar última consulta",
+      "runHint": "⌘/Ctrl + Enter para ejecutar",
+      "running": "Ejecutando…",
+      "run": "Ejecutar"
+    },
+    "chat": {
+      "title": "Chat",
+      "thinking": "pensando…",
+      "claudeSession": "claude code session",
+      "apiKeySet": "api key lista",
+      "envKeySet": "env key lista",
+      "setApiKey": "configurar api key",
+      "configureAccess": "configurar accesos",
+      "save": "guardar",
+      "storedNote": "se guarda solo en tu navegador — nunca se envía salvo al backend",
+      "emptyTitle": "Habla con tu base de datos.",
+      "emptyHint": "Pregunta en lenguaje natural. Claude propone el SQL; tú decides cuándo ejecutarlo.",
+      "examplesLabel": "Ejemplos",
+      "placeholder": {
+        "disconnected": "Base de datos desconectada",
+        "noKey": "Configura una API key de Anthropic para chatear",
+        "ready": "Pregúntale a tus datos…"
+      },
+      "send": "Enviar",
+      "stop": "Detener",
+      "proposedSql": "SQL propuesto",
+      "running": "ejecutando…",
+      "done": "listo",
+      "run": "ejecutar",
+      "rows": "{{count}} rows"
+    }
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "toast": { "error": "Algo salió mal", "deleted": "Dashboard eliminado" },
+    "selector": {
+      "none": "(sin dashboards)",
+      "chartCount": "{{count}} gráficas",
+      "nameRequired": "Escribe un nombre",
+      "namePlaceholder": "Nombre del dashboard…",
+      "new": "nuevo",
+      "create": "crear",
+      "rename": "Renombrar",
+      "save": "guardar",
+      "cancel": "cancelar",
+      "deleteDashboard": "eliminar dashboard",
+      "confirmDelete": "¿Eliminar dashboard \"{{name}}\" y todas sus gráficas?"
+    },
+    "empty": {
+      "first": {
+        "title": "Tu primer dashboard",
+        "hint": "Crea uno arriba para empezar. Luego ejecuta una consulta en el workspace y guárdala como gráfica."
+      },
+      "tiles": {
+        "title": "Dashboard vacío",
+        "hint": "Ve al Workspace, ejecuta una consulta, abre la pestaña Gráfica y dale a Guardar."
       }
     },
-    "delete": {
-      "title": "Eliminar Empleado",
-      "confirm": "¿Estás seguro que querés eliminar a {{name}}? Esta acción no se puede deshacer."
+    "tile": {
+      "refresh": "Refrescar",
+      "delete": "Eliminar",
+      "confirmDelete": "¿Eliminar \"{{title}}\"?"
+    }
+  },
+  "nocode": {
+    "title": "No Code",
+    "subtitle": "respuestas directas, sin SQL ni jerga técnica",
+    "thinking": "pensando…",
+    "newConversation": "nueva conversación",
+    "claudeSession": "claude code",
+    "apiKeySet": "api key lista",
+    "envKeySet": "env key lista",
+    "setApiKey": "configurar api key",
+    "configureAccess": "configurar accesos",
+    "save": "guardar",
+    "emptyTitle": "Pregunta. Te responde.",
+    "emptyHint": "Modo sin código: investiga tu base por dentro y te entrega solo la respuesta — sí/no, número, o explicación corta.",
+    "examplesLabel": "Ejemplos",
+    "placeholder": {
+      "disconnected": "Base de datos desconectada",
+      "noKey": "Configura una API key para chatear",
+      "ready": "Pregunta algo simple, ej. ¿se concilió ADDI ayer?"
+    },
+    "send": "Enviar",
+    "stop": "Detener",
+    "investigating": "investigando…",
+    "investigatingN": "investigando ({{count}} consultas)"
+  },
+  "warnings": {
+    "filters": { "all": "todos", "issues": "problemas", "ok": "ok" },
+    "reload": "Recargar",
+    "clearAll": "Borrar todo",
+    "confirmClear": "¿Borrar todo el historial de warnings?",
+    "saving": "guardando…",
+    "saved": "guardado en Warnings",
+    "saveFailed": "no se pudo guardar",
+    "empty": {
+      "none": {
+        "title": "Sin warnings todavía",
+        "hint": "Pregúntale al chat sobre conciliaciones; los hallazgos aparecerán aquí."
+      },
+      "filter": { "title": "Nada en este filtro", "hint": "Cambia el filtro para ver otros registros." }
+    },
+    "card": {
+      "tables": "tablas",
+      "detail": "detalle",
+      "fix": "posible corrección",
+      "question": "pregunta original",
+      "queries": "queries ejecutadas",
+      "delete": "eliminar"
+    }
+  },
+  "connection": {
+    "banner": {
+      "notConfigured": "No has configurado tu base de datos todavía.",
+      "backendUnreachable": "No se pudo contactar el backend. Verifica que esté en ejecución.",
+      "cannotConnect": "No se pudo conectar a la base de datos",
+      "configureNow": "Configurar ahora",
+      "editConnection": "Editar conexión"
+    },
+    "modal": {
+      "title": "Configurar accesos"
+    },
+    "tabs": {
+      "connection": "Base de datos",
+      "apiKey": "Clave Anthropic",
+      "usage": "Uso",
+      "glossary": "Glosario",
+      "memory": "Memoria"
+    },
+    "apiKey": {
+      "label": "Clave de API de Anthropic",
+      "claudeSession": "Usando tu sesión de Claude Code — no necesitas clave.",
+      "envKeySet": "Hay una clave configurada en el backend — no necesitas clave.",
+      "storedNote": "Se guarda solo en tu navegador — nunca se envía salvo al backend.",
+      "toggleKey": "Mostrar u ocultar la clave",
+      "remove": "Quitar",
+      "save": "Guardar"
+    },
+    "usage": {
+      "estimatedCost": "Costo estimado",
+      "model": "Modelo: {{model}}",
+      "inputTokens": "Tokens de entrada",
+      "outputTokens": "Tokens de salida",
+      "cacheWriteTokens": "Tokens de escritura de caché",
+      "cacheReadTokens": "Tokens de lectura de caché",
+      "totalTokens": "Tokens totales",
+      "turns": "Turnos de chat",
+      "priceNote": "Estimado a ${{input}}/1M de entrada · ${{output}}/1M de salida. Precios de lista; la caché se cobra aparte.",
+      "reset": "Reiniciar contador"
+    },
+    "form": {
+      "host": "Host",
+      "port": "Puerto",
+      "user": "Usuario",
+      "password": "Contraseña",
+      "storedPassword": "guardada",
+      "togglePassword": "Mostrar u ocultar contraseña",
+      "database": "Base de datos",
+      "pickDatabase": "Elige una base…",
+      "sslDisabled": "Deshabilitar SSL",
+      "disconnect": "Desconectar",
+      "test": "Probar",
+      "connect": "Conectar"
     },
     "toast": {
-      "created": "Empleado creado exitosamente",
-      "updated": "Empleado actualizado exitosamente",
-      "deleted": "Empleado eliminado exitosamente",
-      "downloaded": "Legajo descargado exitosamente",
-      "error": "Ocurrió un error. Intentá de nuevo."
+      "testOk": "Conexión correcta",
+      "testFailed": "Falló la prueba de conexión",
+      "dbListFailed": "No se pudieron listar las bases de datos",
+      "connected": "Conectado",
+      "connectFailed": "No se pudo conectar",
+      "disconnected": "Desconectado",
+      "error": "Algo salió mal"
+    },
+    "glossary": {
+      "summary": "{{loaded}} términos cargados · {{matched}} coinciden con el esquema",
+      "uploaded": "{{count}} términos cargados",
+      "uploadFailed": "No se pudo cargar el glosario",
+      "cleared": "Glosario limpiado",
+      "csvPlaceholder": "Pega aquí el CSV del glosario (columnas: Variable, Definición, …)",
+      "clear": "Limpiar",
+      "upload": "Cargar"
+    },
+    "memory": {
+      "placeholder": "Añade una nota que se incluirá en cada consulta…",
+      "add": "Añadir",
+      "empty": "Sin notas todavía.",
+      "delete": "Eliminar nota",
+      "addFailed": "No se pudo añadir la nota"
     }
   }
 }
